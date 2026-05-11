@@ -84,7 +84,7 @@ When a developer pushes and waits for CI before they can validate their change, 
 |---|---|
 | **Queue wait** | Time before the build starts, gated by parallel job availability. Grows non-linearly with utilisation (M/M/1 queueing). |
 | **Build duration** | Compile + unit tests. |
-| **Test/regression duration** | Integration tests, often the largest chunk. |
+| **Test/regression duration** | Integration tests (the test category, not the env), often the largest chunk. |
 
 The total is usually 15-45 minutes for our pipeline. During this time the developer is *partially* productive on other work but pays a context-switch tax.
 
@@ -106,6 +106,13 @@ Annual cost (8 devs × 6 builds/day × 250 days):
 ---
 
 ### 4. Failed-build retry cost (the shift-left lever)
+
+> **Important note about our specific setup**: our CI runs builds, unit tests, and QA tests on every push, but **it does not gate deployment**. Failing CI does not stop code from reaching the Development environment. This means:
+>
+> - The "retries" below are caused by developers iterating on broken pushes, not by CI rejecting them.
+> - When CI does catch a real bug, the cost is still paid at the Development-env stage (15x) instead of being contained at the CI stage (6.5x), because the bug flows through anyway.
+> - **Enabling CI gating is a separate, complementary improvement** worth ~$15-30k/year on its own. Discussed in `shift-left-economics.md` and `business-case.md`.
+
 
 If our CI failure rate is 30% (industry average is 20-40%), and 50% of those failures are caused by issues that *should have been caught locally*:
 
@@ -146,7 +153,7 @@ The compute line is small but the *behavioural* line items (idle, retries) are t
 
 ## How shared environments amplify the cost (the contention curve)
 
-When N developers share one integration environment, they share its capacity. M/M/1 queueing theory gives wait time as a function of utilisation ρ:
+When N developers share one Development environment, they share its capacity. M/M/1 queueing theory gives wait time as a function of utilisation ρ:
 
 ```
 expected_wait_time ≈ (ρ / (1 - ρ)) × service_time

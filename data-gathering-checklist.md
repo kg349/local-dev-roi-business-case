@@ -14,7 +14,9 @@ This is the input that drives Pillar 1 (shift-left rework cost) and is the singl
 
 ### Required: a `Found In` field on Bug work items
 
-Most Azure DevOps Bug templates have a "Found In" field — confirm yours does. If not, ask the process admin to add a custom field with values: `Local`, `CodeReview`, `CI`, `Integration`, `Staging`, `Production`. Going forward devs/QA fill it in when filing bugs.
+Most Azure DevOps Bug templates have a "Found In" field — confirm yours does. If not, ask the process admin to add a custom field with values matching our four environments: `Local`, `Development`, `Staging`, `Production`. Going forward devs/QA fill it in when filing bugs.
+
+> Note: we deliberately do **not** include "CI" as a separate `Found In` value. Our CI pipeline runs but does not gate deployment, so a CI-flagged bug operationally reaches the Development environment where it's actually caught/fixed. Counting it as "Development" matches the cost it actually incurs.
 
 ### WIQL query — defects by detection stage (last 180 days)
 
@@ -40,9 +42,7 @@ ORDER BY [System.CreatedDate] DESC
 ```
 Stage          Count    %
 Local          ___      ___
-CodeReview     ___      ___
-CI             ___      ___
-Integration    ___      ___
+Development    ___      ___
 Staging        ___      ___
 Production     ___      ___
 TOTAL          ___      100%
@@ -64,7 +64,7 @@ Or, sample 30 random bugs and manually classify them — extrapolate from the sa
 
 ## 2. PR cycle time for bug-fix PRs
 
-Drives Pillar 2 (integration-fix workflow cost).
+Drives Pillar 2 (development-fix workflow cost).
 
 ### KQL query (Azure DevOps Analytics)
 
@@ -235,7 +235,7 @@ This is the highest-quality data we can produce — direct measurement of inner-
 >
 > 1. *Timestamp when you initiate the verify step*
 > 2. *Timestamp when you have the result*
-> 3. *Where the verification happened: Local / CI / Integration env / Staging*
+> 3. *Where the verification happened: Local / Development env / Staging*
 > 4. *Outcome: Worked / Broke / Inconclusive*
 >
 > *Use a simple spreadsheet or even a Slack thread. Don't overthink — count anything that's a 'verify the change' moment."*
@@ -244,7 +244,7 @@ This is the highest-quality data we can produce — direct measurement of inner-
 
 | Date/time start | Date/time end | Cycle min | Where | Outcome | Notes |
 |---|---|---|---|---|---|
-| 2025-04-21 09:14 | 09:38 | 24 | Integration | Worked | Auth fix |
+| 2025-04-21 09:14 | 09:38 | 24 | Development | Worked | Auth fix |
 | 2025-04-21 10:02 | 10:06 | 4 | Local (just unit test) | Worked | |
 | ... | ... | ... | ... | ... | ... |
 
@@ -254,7 +254,7 @@ This is the highest-quality data we can produce — direct measurement of inner-
 Total cycle-min logged: ___
 Number of verify events: ___
 Median cycle time: ___ min
-% verifications that happened in Integration or beyond: ___%
+% verifications that happened in Development or beyond: ___%
 % in Local or unit-test only: ___%
 ```
 
@@ -314,7 +314,7 @@ If you can do only:
 |---|---|---|
 | **1 hour** | Run query #1 (defect distribution) | A real PCE %; the model becomes defensible |
 | **2 hours** | Add #4 (hourly rate) and #5 (headcount) | Real dollar numbers, not placeholder ones |
-| **4 hours** | Add #2 (PR cycle time) and #3 (pipeline) | The integration-fix workflow tab and the pipeline tab use real numbers |
+| **4 hours** | Add #2 (PR cycle time) and #3 (pipeline) | The development-fix workflow tab and the pipeline tab use real numbers |
 | **1 week** | Add #7 (developer time-tracking) | The cycle-time number is *measured*, not estimated |
 | **6-8 hours** | Add #8, #9, #10 | The deck has texture and credibility |
 

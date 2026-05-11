@@ -2,7 +2,7 @@
 
 ## TL;DR
 
-Without a working local environment, every code change requires a 15-45 minute round-trip to the integration env to verify. Healthy teams verify changes in under 2 minutes locally. Multiplied across iterations, developers, and sprints, this cycle-time gap **directly subtracts from sprint capacity** — typically 20-30% of nominal velocity, equivalent to losing 1.5-2 developers' worth of output on an 8-person team.
+Without a working local environment, every code change requires a 15-45 minute round-trip to the Development environment to verify. Healthy teams verify changes in under 2 minutes locally. Multiplied across iterations, developers, and sprints, this cycle-time gap **directly subtracts from sprint capacity** — typically 20-30% of nominal velocity, equivalent to losing 1.5-2 developers' worth of output on an 8-person team.
 
 > **For an 8-dev team: ~$340-510k/year in sprint capacity lost to cycle-time delays alone.**
 > **Plus: ~20% story carry-over rate today vs ~5% achievable, eroding sprint predictability.**
@@ -32,7 +32,7 @@ If T_iteration goes from 1.5 min to 20 min (a 13x degradation), the dev's produc
 ### Today (broken inner loop)
 
 ```
-T_today = edit + commit + push + CI_build + deploy_to_shared_dev + repro + verify
+T_today = edit + commit + push + CI_build + deploy_to_Development + repro + verify
         ≈ 2 + 1 + 1 + 8 + 6 + 3 + 4 = 25 min/iteration  (placeholder)
 ```
 
@@ -147,7 +147,7 @@ We do **not** put a hard dollar number on predictability premium in the spreadsh
 
 ## The contention amplifier (shared environments)
 
-When multiple devs share one integration/dev environment, cycle time gets *worse* than the per-dev calculation suggests. M/M/1 queueing theory:
+When multiple devs share one Development environment, cycle time gets *worse* than the per-dev calculation suggests. M/M/1 queueing theory:
 
 ```
 expected_wait_time = (ρ / (1 - ρ)) × service_time
@@ -196,7 +196,7 @@ This slide speaks all three:
 - "1 in 5 stories carries over to next sprint, every sprint" → predictability.
 - "Each cycle of feature delivery is 33% slower than it should be" → stakeholder relationships.
 
-Pair this with two recent real examples — *"remember when story X was supposed to ship sprint 24 but slipped to 26 because of integration-env issues?"* — and the abstract becomes concrete.
+Pair this with two recent real examples — *"remember when story X was supposed to ship sprint 24 but slipped to 26 because of Development-env issues?"* — and the abstract becomes concrete.
 
 ---
 

@@ -25,7 +25,7 @@ The self-assessment grid at the bottom of this document is the artefact you brin
 
 | | |
 |---|---|
-| **Description** | Multiple devs deploy to and use a single shared dev or integration environment to run their in-progress work. |
+| **Description** | Multiple devs deploy to and use a single shared Development environment to run their in-progress work. |
 | **Why it exists** | They can't run their service against real Azure dependencies locally. |
 | **Hidden cost** | Queue contention (see queueing math in `cycle-time-and-sprint-impact.md`); destructive-test collisions; "who's deployed right now?" Slack messages; debugging interference from someone else's data. |
 | **Risk** | Two devs' broken code masking each other; data corruption; no isolation. |
@@ -47,7 +47,7 @@ The self-assessment grid at the bottom of this document is the artefact you brin
 |---|---|
 | **Description** | Code paths like `if (env == "local") skipAuth();` or hardcoded test tokens that aren't supposed to ever ship. |
 | **Why it exists** | Real auth needs real Azure AD; emulators that work would let it run. |
-| **Hidden cost** | Pollutes production code with environment branching; "we don't test the real auth path locally" means auth bugs only surface in integration. |
+| **Hidden cost** | Pollutes production code with environment branching; "we don't test the real auth path locally" means auth bugs only surface in the Development environment. |
 | **Risk** | **Critical.** Audit findings, accidental ship of dev code, security debt. *Has caused real-world incidents at multiple Fortune 500 companies.* |
 | **Removed by Docker + emulators?** | **Yes** — Azurite + Azure AD emulation patterns + dev secret stores remove the need. |
 
@@ -67,7 +67,7 @@ The self-assessment grid at the bottom of this document is the artefact you brin
 |---|---|
 | **Description** | `IBlobStorageService` mocked in unit tests with a stub that returns canned responses, instead of running against a real Azurite instance. |
 | **Why it exists** | Mocks are easy; running real services locally requires the infrastructure we don't have. |
-| **Hidden cost** | Tests pass that don't actually test the integration. Bugs that *only* appear when wired to real Azure surface in integration env, not locally. |
+| **Hidden cost** | Tests pass that don't actually test the integration. Bugs that *only* appear when wired to real Azure surface in the Development env, not locally. |
 | **Risk** | False sense of safety. Drift between mocked behaviour and real behaviour. |
 | **Removed by Docker + emulators?** | **Yes** — emulators give us "real but local" testing for blob, queue, table, Cosmos, SQL. |
 
@@ -105,7 +105,7 @@ The self-assessment grid at the bottom of this document is the artefact you brin
 
 | | |
 |---|---|
-| **Description** | Two developers blocked together on one integration env trying to reproduce a bug; one drives, one watches. |
+| **Description** | Two developers blocked together on one shared Development env trying to reproduce a bug; one drives, one watches. |
 | **Why it exists** | The bug only reproduces in the shared env. |
 | **Hidden cost** | 2x developer time per bug. |
 | **Risk** | Single point of access to env (others queued); collaboration friction. |

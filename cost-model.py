@@ -22,10 +22,14 @@ Design notes
   data-gathering-checklist.md.
 
 - The `use_bottom_up_multiplier` toggle on the Inputs tab switches between:
-    TRUE  - integration-stage cost is computed bottom-up from the
-            Integration-Fix-Workflow tab (recommended).
-    FALSE - integration-stage cost uses IBM's textbook 15x multiplier and
+    TRUE  - development-stage cost is computed bottom-up from the
+            Development-Fix-Workflow tab (recommended).
+    FALSE - development-stage cost uses IBM's textbook 15x multiplier and
             adds the workflow tax as a separate line (avoids double-counting).
+
+Environment topology assumed: Local -> Development -> Staging -> Production.
+CI exists but does not gate deployment; CI-flagged bugs flow through to the
+Development environment where they are operationally caught and fixed.
 """
 from __future__ import annotations
 
@@ -52,24 +56,24 @@ class Inputs:
     sprints_per_year: int = 26
 
     # Bug volume and distribution (today)
+    # Stages: Local -> Development -> Staging -> Production
+    # (CI exists but does not gate deployment, so bugs flagged by CI still flow to Dev
+    # and are operationally caught/fixed at the Dev stage.)
     bugs_per_year: int = 400
     pct_today_local: float = 0.35
-    pct_today_ci: float = 0.15
-    pct_today_int: float = 0.30
+    pct_today_dev: float = 0.45  # consolidates the typical CI-15% + Integration-30% since CI doesn't gate
     pct_today_stg: float = 0.15
     pct_today_prod: float = 0.05
 
     # Bug distribution (target after investment)
-    pct_target_local: float = 0.70
-    pct_target_ci: float = 0.15
-    pct_target_int: float = 0.10
-    pct_target_stg: float = 0.04
-    pct_target_prod: float = 0.01
+    pct_target_local: float = 0.75
+    pct_target_dev: float = 0.18
+    pct_target_stg: float = 0.05
+    pct_target_prod: float = 0.02
 
-    # Cost multipliers (IBM SSI baseline)
+    # Cost multipliers (IBM SSI baseline, adapted to 4-stage topology)
     mult_local: float = 1.0
-    mult_ci: float = 6.5
-    mult_int: float = 15.0
+    mult_dev: float = 15.0  # IBM "Integration" multiplier — same workflow, different name
     mult_stg: float = 40.0
     mult_prod: float = 100.0
 
@@ -212,7 +216,7 @@ def build_workbook(inp: Inputs) -> Workbook:
     build_inputs(wb, inp)
     build_defect_distribution(wb)
     build_bug_cost_by_stage(wb)
-    build_integration_fix_workflow(wb)
+    build_development_fix_workflow(wb)
     build_pipeline_cost(wb)
     build_cycle_time_sprint(wb)
     build_workarounds(wb)
@@ -247,27 +251,24 @@ def build_inputs(wb: Workbook, inp: Inputs):
         ("--- Bug Volume & Distribution Today ---", None, "", "", ""),
         ("Bugs per year", "bugs_per_year", inp.bugs_per_year, "bugs", "Annualised from last 180 days of Azure Boards"),
         ("% bugs caught Local today", "pct_today_local", inp.pct_today_local, "%", "From WIQL query, Found In = Local"),
-        ("% bugs caught CI today", "pct_today_ci", inp.pct_today_ci, "%", ""),
-        ("% bugs caught Integration today", "pct_today_int", inp.pct_today_int, "%", ""),
+        ("% bugs caught Development today", "pct_today_dev", inp.pct_today_dev, "%", "CI doesn't gate so CI-flagged bugs roll into Dev"),
         ("% bugs caught Staging today", "pct_today_stg", inp.pct_today_stg, "%", ""),
         ("% bugs caught Production today", "pct_today_prod", inp.pct_today_prod, "%", ""),
 
         ("--- Target Distribution (Post-Investment) ---", None, "", "", ""),
         ("% bugs caught Local target", "pct_target_local", inp.pct_target_local, "%", "Capers Jones median-elite range"),
-        ("% bugs caught CI target", "pct_target_ci", inp.pct_target_ci, "%", ""),
-        ("% bugs caught Integration target", "pct_target_int", inp.pct_target_int, "%", ""),
+        ("% bugs caught Development target", "pct_target_dev", inp.pct_target_dev, "%", ""),
         ("% bugs caught Staging target", "pct_target_stg", inp.pct_target_stg, "%", ""),
         ("% bugs caught Production target", "pct_target_prod", inp.pct_target_prod, "%", ""),
 
         ("--- IBM Cost-of-Defect Multipliers ---", None, "", "", ""),
         ("Multiplier (Local)", "mult_local", inp.mult_local, "x", "Baseline"),
-        ("Multiplier (CI)", "mult_ci", inp.mult_ci, "x", "IBM SSI"),
-        ("Multiplier (Integration)", "mult_int", inp.mult_int, "x", "IBM SSI; toggle below replaces with bottom-up value"),
+        ("Multiplier (Development)", "mult_dev", inp.mult_dev, "x", "IBM Integration 15x; toggle below replaces with bottom-up value"),
         ("Multiplier (Staging)", "mult_stg", inp.mult_stg, "x", "IBM SSI"),
         ("Multiplier (Production)", "mult_prod", inp.mult_prod, "x", "IBM SSI / NIST RTI 2002"),
         ("Local fix hours (baseline)", "local_fix_hours", inp.local_fix_hours, "hrs", "Time to fix a bug found locally"),
 
-        ("--- Integration-Fix Workflow ---", None, "", "", ""),
+        ("--- Development-Fix Workflow ---", None, "", "", ""),
         ("Triage / work item creation", "triage_min", inp.triage_min, "min", ""),
         ("Branch creation + repro attempt", "branch_repro_min", inp.branch_repro_min, "min", ""),
         ("Code fix", "code_fix_min", inp.code_fix_min, "min", ""),
@@ -377,8 +378,7 @@ def build_defect_distribution(wb: Workbook):
 
     stages = [
         ("Local", "pct_today_local", "pct_target_local", "mult_local"),
-        ("CI / Code Review", "pct_today_ci", "pct_target_ci", "mult_ci"),
-        ("Integration", "pct_today_int", "pct_target_int", "mult_int"),
+        ("Development", "pct_today_dev", "pct_target_dev", "mult_dev"),
         ("Staging / UAT", "pct_today_stg", "pct_target_stg", "mult_stg"),
         ("Production", "pct_today_prod", "pct_target_prod", "mult_prod"),
     ]
@@ -389,14 +389,14 @@ def build_defect_distribution(wb: Workbook):
         ws.cell(row=row, column=1, value=stage).border = BORDER
         ws.cell(row=row, column=2, value=f"={today}").number_format = "0.0%"
         ws.cell(row=row, column=3, value=f"={target}").number_format = "0.0%"
-        # Multiplier — when stage is Integration and toggle ON, swap for bottom-up value.
-        if stage == "Integration":
+        # Multiplier — when stage is Development and toggle ON, swap for bottom-up value.
+        if stage == "Development":
             ws.cell(
                 row=row,
                 column=4,
                 value=("=IF(use_bottom_up_multiplier=1,"
-                       "integration_fix_total/(local_fix_hours*hourly_rate),"
-                       "mult_int)"),
+                       "development_fix_total/(local_fix_hours*hourly_rate),"
+                       "mult_dev)"),
             )
         else:
             ws.cell(row=row, column=4, value=f"={mult}")
@@ -490,42 +490,37 @@ def build_bug_cost_by_stage(wb: Workbook):
     ws.cell(row=5, column=3, value=1.0).number_format = "0.00"
     ws.cell(row=5, column=4, value="Baseline; ~55 min of dev time")
 
-    ws.cell(row=6, column=1, value="CI / Code Review")
-    ws.cell(row=6, column=2, value="=$B$5*mult_ci").number_format = "$#,##0"
-    ws.cell(row=6, column=3, value="=mult_ci").number_format = "0.00"
-    ws.cell(row=6, column=4, value="IBM SSI baseline — caught at code review or CI build")
+    ws.cell(row=6, column=1, value="Development")
+    ws.cell(row=6, column=2, value=("=IF(use_bottom_up_multiplier=1,"
+                                       "development_fix_total,"
+                                       "$B$5*mult_dev)")).number_format = "$#,##0"
+    ws.cell(row=6, column=3, value="=B6/$B$5").number_format = "0.00"
+    ws.cell(row=6, column=4, value="Bottom-up if toggle ON; IBM 15x if OFF")
 
-    ws.cell(row=7, column=1, value="Integration")
-    ws.cell(row=7, column=2, value=("=IF(use_bottom_up_multiplier=1,"
-                                       "integration_fix_total,"
-                                       "$B$5*mult_int)")).number_format = "$#,##0"
-    ws.cell(row=7, column=3, value="=B7/$B$5").number_format = "0.00"
-    ws.cell(row=7, column=4, value="Bottom-up if toggle ON; IBM 15x if OFF")
+    ws.cell(row=7, column=1, value="Staging")
+    ws.cell(row=7, column=2, value="=$B$5*mult_stg").number_format = "$#,##0"
+    ws.cell(row=7, column=3, value="=mult_stg").number_format = "0.00"
+    ws.cell(row=7, column=4, value="IBM SSI 40x")
 
-    ws.cell(row=8, column=1, value="Staging")
-    ws.cell(row=8, column=2, value="=$B$5*mult_stg").number_format = "$#,##0"
-    ws.cell(row=8, column=3, value="=mult_stg").number_format = "0.00"
-    ws.cell(row=8, column=4, value="IBM SSI 40x")
+    ws.cell(row=8, column=1, value="Production")
+    ws.cell(row=8, column=2, value="=$B$5*mult_prod").number_format = "$#,##0"
+    ws.cell(row=8, column=3, value="=mult_prod").number_format = "0.00"
+    ws.cell(row=8, column=4, value="IBM SSI 100x; corroborated by NIST RTI 2002")
 
-    ws.cell(row=9, column=1, value="Production")
-    ws.cell(row=9, column=2, value="=$B$5*mult_prod").number_format = "$#,##0"
-    ws.cell(row=9, column=3, value="=mult_prod").number_format = "0.00"
-    ws.cell(row=9, column=4, value="IBM SSI 100x; corroborated by NIST RTI 2002")
-
-    for r in range(5, 10):
+    for r in range(5, 9):
         for c in range(1, 5):
             ws.cell(row=r, column=c).border = BORDER
 
 
 # ---------------------------------------------------------------------------
-# Integration-Fix-Workflow sheet
+# Development-Fix-Workflow sheet
 # ---------------------------------------------------------------------------
 
-def build_integration_fix_workflow(wb: Workbook):
-    ws = wb.create_sheet("Integration-Fix-Workflow")
+def build_development_fix_workflow(wb: Workbook):
+    ws = wb.create_sheet("Development-Fix-Workflow")
     widen(ws, {"A": 38, "B": 14, "C": 12, "D": 14, "E": 14, "F": 30})
 
-    ws["A1"] = "Integration-Fix Workflow — Bottom-Up Cost Per Bug"
+    ws["A1"] = "Development-Fix Workflow — Bottom-Up Cost Per Bug"
     ws["A1"].font = Font(bold=True, size=14)
     ws.merge_cells("A1:F1")
 
@@ -607,45 +602,34 @@ def build_integration_fix_workflow(wb: Workbook):
 
     # Grand total
     total_row(ws, row, cols=6)
-    ws.cell(row=row, column=1, value="GRAND TOTAL per integration-stage fix")
+    ws.cell(row=row, column=1, value="GRAND TOTAL per development-stage fix")
     ws.cell(row=row, column=5, value=f"={with_retry_cell}+{contention_cell}+{context_cell}+{pipeline_cell}").number_format = "$#,##0.00"
-    # This is row 30 — referenced from Bug-Cost-by-Stage and Defect-Distribution-PCE.
-    # Make sure the row matches: assertion below.
     grand_total_row = row
-    grand_total_cell = f"B{row}"  # We use column B in the cross-references
-    # Actually we use $E$row, but for simplicity put a copy in B too
     ws.cell(row=row, column=2, value=f"=E{row}").number_format = "$#,##0.00"
     row += 2
 
-    # Sanity check: cross-references expected this on row 30. If not, adjust.
-    # Hard-code: we want B30 to be the grand total. Compute current row.
-    # We have 13 steps + 1 AI tool = 14 rows of data starting at row 4 → end at row 17.
-    # +1 subtotal (18), +1 retry (19), +1 contention (20), +1 context (21), +1 pipeline (22),
-    # +1 grand total (23). So actual row is 23, not 30.
-    # We need to update the cross-references in the other tabs to match row 23.
-    # Defer: adjust by storing the row and post-processing, OR by using a named range.
-    dn = DefinedName(name="integration_fix_total", attr_text=f"'Integration-Fix-Workflow'!$E${grand_total_row}")
-    wb.defined_names["integration_fix_total"] = dn
+    dn = DefinedName(name="development_fix_total", attr_text=f"'Development-Fix-Workflow'!$E${grand_total_row}")
+    wb.defined_names["development_fix_total"] = dn
 
     # Annual workflow tax
     section_row(ws, row, "Annual Workflow Tax", cols=6)
     row += 1
-    ws.cell(row=row, column=1, value="Integration-stage bugs per year")
-    ws.cell(row=row, column=5, value="=bugs_per_year*pct_today_int").number_format = "#,##0"
-    int_bugs_cell = f"E{row}"
+    ws.cell(row=row, column=1, value="Development-stage bugs per year")
+    ws.cell(row=row, column=5, value="=bugs_per_year*pct_today_dev").number_format = "#,##0"
+    dev_bugs_cell = f"E{row}"
     row += 1
     ws.cell(row=row, column=1, value="Bugs shifted to local (annual)")
-    ws.cell(row=row, column=5, value=f"={int_bugs_cell}*pct_preventable_with_local").number_format = "#,##0"
+    ws.cell(row=row, column=5, value=f"={dev_bugs_cell}*pct_preventable_with_local").number_format = "#,##0"
     shifted_cell = f"E{row}"
     row += 1
     ws.cell(row=row, column=1, value="Per-fix workflow tax (vs local fix cost)")
-    ws.cell(row=row, column=5, value=f"=integration_fix_total - (local_fix_hours*hourly_rate)").number_format = "$#,##0.00"
+    ws.cell(row=row, column=5, value=f"=development_fix_total - (local_fix_hours*hourly_rate)").number_format = "$#,##0.00"
     per_fix_tax_cell = f"E{row}"
     row += 1
     total_row(ws, row, cols=6)
     ws.cell(row=row, column=1, value="ANNUAL WORKFLOW TAX RECOVERABLE (if toggle OFF)")
     ws.cell(row=row, column=5, value=f"={shifted_cell}*{per_fix_tax_cell}").number_format = "$#,##0"
-    dn2 = DefinedName(name="annual_workflow_tax", attr_text=f"'Integration-Fix-Workflow'!$E${row}")
+    dn2 = DefinedName(name="annual_workflow_tax", attr_text=f"'Development-Fix-Workflow'!$E${row}")
     wb.defined_names["annual_workflow_tax"] = dn2
 
 
@@ -1028,15 +1012,13 @@ def write_csv(inp: Inputs, path: str):
 
     weighted_today = (
         inp.pct_today_local * inp.mult_local
-        + inp.pct_today_ci * inp.mult_ci
-        + inp.pct_today_int * inp.mult_int
+        + inp.pct_today_dev * inp.mult_dev
         + inp.pct_today_stg * inp.mult_stg
         + inp.pct_today_prod * inp.mult_prod
     )
     weighted_target = (
         inp.pct_target_local * inp.mult_local
-        + inp.pct_target_ci * inp.mult_ci
-        + inp.pct_target_int * inp.mult_int
+        + inp.pct_target_dev * inp.mult_dev
         + inp.pct_target_stg * inp.mult_stg
         + inp.pct_target_prod * inp.mult_prod
     )

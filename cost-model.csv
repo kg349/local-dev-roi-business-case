@@ -3,18 +3,18 @@ Inputs,Team size,8
 Inputs,Hourly rate,$85.00
 Inputs,Bugs per year,400
 Inputs,PCE(local) today,35%
-Inputs,PCE(local) target,70%
+Inputs,PCE(local) target,75%
 Inputs,Cycle time today (min),25.0
 Inputs,Cycle time target (min),2.0
-Computed,Weighted defect cost today (units),16.82
-Computed,Weighted defect cost target (units),5.78
+Computed,Weighted defect cost today (units),18.10
+Computed,Weighted defect cost target (units),7.45
 Computed,Local fix cost ($),$78.20
-Savings,1. Shift-left rework,"$345,644"
+Savings,1. Shift-left rework,"$333,132"
 Savings,2. Sprint capacity,"$439,171"
 Savings,3. Pipeline retries,"$38,925"
 Savings,4. Workarounds,"$51,000"
-Savings,TOTAL ANNUAL SAVINGS,"$874,740"
+Savings,TOTAL ANNUAL SAVINGS,"$862,228"
 Investment,One-time investment,"$15,520"
 Investment,Annual ongoing cost,"$10,516"
-ROI,Net annual savings,"$864,224"
+ROI,Net annual savings,"$851,712"
 ROI,Payback period (months),0.2

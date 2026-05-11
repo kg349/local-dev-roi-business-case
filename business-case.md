@@ -10,11 +10,13 @@
 
 ## Executive summary
 
-Our developers cannot fully run their code locally. Every code change must be pushed to a shared integration environment to be verified, and every bug found there triggers a heavyweight PR-driven workflow that costs **10-15x more than the same bug caught at the developer's desk** (consistent with IBM Systems Sciences Institute's well-known cost-of-defect curve, and corroborated by our team-specific bottom-up calculation).
+Our developers cannot fully run their code locally. Every code change must be pushed to a shared Development environment to be verified, and every bug found there triggers a heavyweight PR-driven workflow that costs **10-15x more than the same bug caught at the developer's desk** (consistent with IBM Systems Sciences Institute's well-known cost-of-defect curve, and corroborated by our team-specific bottom-up calculation).
+
+Our pipeline topology is **Local → Development → Staging → Production**. CI exists but does not gate deployment, which means CI-flagged bugs flow through to the Development environment and are caught there at the higher Development-stage cost. (This is a separate, smaller improvement opportunity discussed at the end.)
 
 Three compounding consequences:
 
-1. **Bug rework is ~17x more expensive than it should be**, because most defects are caught after 1x stage. Estimated annual cost: **~$350-540k** depending on actual defect volume.
+1. **Bug rework is ~18x more expensive than it should be**, because most defects are caught after the 1x stage. Estimated annual cost: **~$350-565k** depending on actual defect volume.
 2. **Sprint capacity is eroded by ~33%** because of cycle-time waits — we are paying for 8 developers and getting the output of ~5.3. Estimated annual cost: **~$340-500k**.
 3. **Developers have invented workarounds** (shared databases, hardcoded credentials, disabled auth, push-to-test debugging) that compound security risk, cycle time, and onboarding cost.
 
@@ -30,9 +32,9 @@ This document and the accompanying spreadsheet (`cost-model.xlsx`) make the math
 flowchart LR
     subgraph today [Today: every code change requires the outer loop]
       Edit1[Edit code] --> Push1[Push to git]
-      Push1 --> CI1[Wait for CI<br/>~10 min]
-      CI1 --> Deploy1[Deploy to<br/>shared dev env<br/>~5-10 min]
-      Deploy1 --> Verify1[Verify in<br/>shared env<br/>~3-5 min]
+      Push1 --> CI1[Wait for CI<br/>~10 min<br/>no gating]
+      CI1 --> Deploy1[Deploy to<br/>Development env<br/>~5-10 min]
+      Deploy1 --> Verify1[Verify in<br/>Development env<br/>~3-5 min]
       Verify1 --> Bug1{Bug found?}
       Bug1 -.yes.-> Edit1
     end
@@ -46,7 +48,7 @@ flowchart LR
     end
 ```
 
-**Today**: every iteration of the inner loop costs 15-25 minutes. Bugs escape to integration env or beyond, where they cost 15-100x more to fix.
+**Today**: every iteration of the inner loop costs 15-25 minutes. Bugs escape to the Development environment or beyond, where they cost 15-100x more to fix.
 
 **Target**: every iteration costs 30-90 seconds. Bugs are caught locally where they cost 1x.
 
@@ -58,21 +60,21 @@ The cost of the broken inner loop accumulates through four independent, additive
 
 ### Pillar 1: Shift-left rework cost
 
-The same defect costs ~1x locally, ~6.5x in CI, ~15x in integration, ~40x in staging, ~100x in production (IBM SSI). Today our defect distribution is heavily right-shifted; **every percentage point of detection we move left captures the full multiplier delta**.
+The same defect costs ~1x locally, ~15x in our Development environment, ~40x in staging, ~100x in production (IBM SSI). Today our defect distribution is heavily right-shifted; **every percentage point of detection we move left captures the full multiplier delta**.
 
-> Headline: For 400 defects/year and our placeholder distribution, **annual rework cost is ~$540k today vs ~$185k post-investment ⇒ ~$355k/year savings.**
+> Headline: For 400 defects/year and our placeholder distribution, **annual rework cost is ~$565k today vs ~$232k post-investment ⇒ ~$333k/year savings.**
 >
 > Full math: [`shift-left-economics.md`](shift-left-economics.md)
 
-### Pillar 2: Integration-fix workflow tax
+### Pillar 2: Development-fix workflow tax
 
-Every bug found in the integration environment triggers a 13-step workflow (branch → fix → AI code-check → push → CI → PR → review rounds → approval → merge → redeploy → reverify → loop). This costs **~$729 of fully-loaded engineering time per fix**, vs ~$78 for a locally-caught fix.
+Every bug found in the Development environment triggers a 13-step workflow (branch → fix → AI code-check → push → CI → PR → review rounds → approval → merge → redeploy → reverify → loop). This costs **~$729 of fully-loaded engineering time per fix**, vs ~$78 for a locally-caught fix.
 
-> Headline: For 120 integration-stage bugs/year, ~$53k/year is recoverable by shifting them left.
+> Headline: For 180 Development-stage bugs/year (45% of 400), ~$82k/year is recoverable by shifting them left.
 >
 > Note: this overlaps with Pillar 1; the spreadsheet has a `use_bottom_up_multiplier` toggle that prevents double-counting.
 >
-> Full math: [`integration-fix-workflow-cost.md`](integration-fix-workflow-cost.md)
+> Full math: [`development-fix-workflow-cost.md`](development-fix-workflow-cost.md)
 
 ### Pillar 3: Cycle-time / sprint capacity erosion
 
@@ -96,12 +98,12 @@ Failed CI builds caused by issues that should have been caught locally trigger f
 
 | Pillar | Annual savings (placeholder) |
 |---|---|
-| 1. Shift-left rework cost | $355,000 |
-| 2. Integration-fix workflow tax | included in Pillar 1 (toggle) |
-| 3. Sprint capacity recovery | $365,000 |
-| 4. Pipeline retry recovery | $32,000 |
+| 1. Shift-left rework cost | $333,000 |
+| 2. Development-fix workflow tax | included in Pillar 1 (toggle) |
+| 3. Sprint capacity recovery | $439,000 |
+| 4. Pipeline retry recovery | $39,000 |
 | 5. Workarounds eliminated (from self-assessment) | $25,000 - $80,000 |
-| **Total annual savings** | **~$777,000 - $832,000** |
+| **Total annual savings** | **~$836,000 - $891,000** |
 
 These numbers are placeholders. Real figures depend on team size, hourly rate, and current defect distribution — all of which are inputs in `cost-model.xlsx`.
 
@@ -133,14 +135,13 @@ These numbers are placeholders. Real figures depend on team size, hourly rate, a
 | Metric | Value (placeholder) |
 |---|---|
 | Total one-time cost | ~$15,500 |
-| Total annual ongoing cost | ~$10,000 |
-| Annual savings (conservative) | ~$777,000 |
-| Annual savings (mid case) | ~$832,000 |
-| Annual savings (downside, 25% sensitivity) | ~$583,000 |
-| **Net annual savings (downside)** | **~$573,000** |
+| Total annual ongoing cost | ~$10,500 |
+| Annual savings (mid case) | ~$862,000 |
+| Annual savings (downside, 25% sensitivity) | ~$646,000 |
+| **Net annual savings (downside)** | **~$636,000** |
 | **Payback period (downside)** | **< 1 month** |
-| **3-year NPV (downside, 10% discount)** | **~$1,350,000** |
-| **3-year ROI (downside)** | **~37x investment** |
+| **3-year NPV (downside, 10% discount)** | **~$1,500,000** |
+| **3-year ROI (downside)** | **~38x investment** |
 
 Even at the most conservative end of the sensitivity range, this is one of the highest-ROI investments available to engineering leadership.
 
@@ -178,14 +179,30 @@ Total elapsed time: ~8 weeks, with full team productive on the new setup by end 
 
 | Metric | Today (placeholder) | 6-month target | 12-month target |
 |---|---|---|---|
-| **PCE(local)** — % of defects caught locally | 35% | 55% | 70% |
+| **PCE(local)** — % of defects caught locally | 35% | 60% | 75% |
 | **Inner-loop cycle time** — median minutes per iteration | 25 min | 8 min | 2 min |
 | **Story carry-over rate** | 22% | 12% | 6% |
 | **CI failure rate** | 30% | 18% | 10% |
 | **PR cycle time for bug-fix PRs** (DORA Lead Time) | 2 days | 1 day | 0.5 day |
-| **Defects escaping to production** (% of total) | 5% | 2% | 1% |
+| **Defects escaping to Development** (% of total) | 45% | 25% | 18% |
+| **Defects escaping to Staging** (% of total) | 15% | 8% | 5% |
+| **Defects escaping to Production** (% of total) | 5% | 3% | 2% |
 
 These metrics are also the **post-investment audit trail**: if the savings don't materialise, the metrics will show it within 6 months and the investment can be reconsidered.
+
+---
+
+## A related, complementary improvement: turn on CI gating
+
+While we're proposing this investment, an observation worth raising as a side recommendation:
+
+**Our CI pipeline runs builds, unit tests, and QA tests on every push, but does not block deployment when they fail.** This means CI is currently a *signal* rather than a *containment stage*. Bugs that CI catches at ~6.5x cost (the IBM CI multiplier) end up escaping to the Development environment where they cost ~15x to fix — because the deployment happened anyway.
+
+- **Cost to fix**: an afternoon of platform-engineering work to add a deployment-gating step to the pipeline.
+- **Annual savings**: ~$15-30k/year at our placeholder defect volume (5-10% of current Development-stage rework cost).
+- **Does it replace the local-env investment?** No. It complements it. Local-env catches bugs *before* CI; CI gating catches what slips past local. They are independent levers.
+
+This is too small to anchor a separate business case on, but it's essentially free and should be done alongside the main investment.
 
 ---
 
@@ -211,12 +228,12 @@ The numbers in the deck should be **your numbers**, not the placeholders. The pl
 | [`README.md`](README.md) | Index of all artefacts |
 | **`business-case.md`** (this file) | The main 5-page argument |
 | [`shift-left-economics.md`](shift-left-economics.md) | The IBM cost-of-defect curve, PCE metric, defect distribution math |
-| [`integration-fix-workflow-cost.md`](integration-fix-workflow-cost.md) | Bottom-up cost of the 13-step PR workflow |
+| [`development-fix-workflow-cost.md`](development-fix-workflow-cost.md) | Bottom-up cost of the 13-step PR workflow |
 | [`cycle-time-and-sprint-impact.md`](cycle-time-and-sprint-impact.md) | Sprint capacity erosion math |
 | [`azure-devops-pipeline-cost.md`](azure-devops-pipeline-cost.md) | ADO pricing breakdown |
 | [`developer-workarounds.md`](developer-workarounds.md) | Catalogue of 14 workarounds + self-assessment grid |
 | [`data-gathering-checklist.md`](data-gathering-checklist.md) | ADO/Jira queries + 1-week time-tracking template |
-| [`pitch-deck-outline.md`](pitch-deck-outline.md) | 16-slide deck outline with speaker notes |
+| [`pitch-deck-outline.md`](pitch-deck-outline.md) | 17-slide deck outline with speaker notes |
 | [`cost-model.xlsx`](cost-model.xlsx) | Live Excel model with formulas |
 | [`cost-model.py`](cost-model.py) | Generates the xlsx; edit defaults here |
 | [`cost-model.csv`](cost-model.csv) | Flat CSV fallback |

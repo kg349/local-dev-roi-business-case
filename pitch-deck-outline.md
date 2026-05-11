@@ -1,4 +1,4 @@
-# Pitch Deck Outline — 16 Slides
+# Pitch Deck Outline — 17 Slides
 
 This is the slide-by-slide outline for the management presentation. Build it in PowerPoint or Google Slides; each slide below has:
 
@@ -43,20 +43,21 @@ This is the slide-by-slide outline for the management presentation. Build it in 
 
 ## Slide 3: The shift-left curve (industry data)
 
-**Title**: A bug found in integration costs ~15x more than the same bug at the developer's desk
+**Title**: A bug found in our Development environment costs ~15x more than the same bug at the developer's desk
 
-**Visual**: Bar chart with stages on x-axis, multiplier on y-axis
+**Visual**: Bar chart with stages on x-axis, multiplier on y-axis. We use a 4-stage view matching our actual environments.
 
-| Local | CI | Integration | Staging | Production |
-|---|---|---|---|---|
-| 1x | 6.5x | 15x | 40x | 100x |
+| Local | Development | Staging | Production |
+|---|---|---|---|
+| 1x | 15x | 40x | 100x |
 
 **Bullets**:
 - IBM Systems Sciences Institute, corroborated by NIST RTI 2002 and Capers Jones
 - *Same defect, different stages, dramatically different cost*
 - The cost is paid in: rework, redeployment, multi-person triage, opportunity cost
+- Our pipeline: **Local → Development → Staging → Production** (no separate Integration env; CI runs but does not gate, so CI-flagged bugs flow through to Development at 15x cost)
 
-**Speaker notes**: *"This curve is the foundation of every shift-left argument in software engineering. It's been measured many times. The point is simple: we want bugs caught as far left as possible. Today, ours aren't."*
+**Speaker notes**: *"This curve is the foundation of every shift-left argument in software engineering. It's been measured many times. The point is simple: we want bugs caught as far left as possible. Today, ours aren't. Note we have only four environments — CI runs but isn't a gate, so its catches still cost us at the Development-stage rate."*
 
 ---
 
@@ -68,8 +69,7 @@ This is the slide-by-slide outline for the management presentation. Build it in 
 
 **Bullets**:
 - Local: **35%** (industry elite: 80%+)
-- CI: 15%
-- Integration: **30%**
+- Development: **45%** (consolidates what other orgs split between "CI" 15% + "Integration" 30%, because our CI doesn't gate)
 - Staging: 15%
 - Production: 5%
 - **Phase Containment Effectiveness (local) = 35% — bottom-quartile**
@@ -82,17 +82,17 @@ This is the slide-by-slide outline for the management presentation. Build it in 
 
 ## Slide 5: What shifting left would save (THE MONEY SLIDE)
 
-**Title**: Moving 35% of defects from integration to local saves ~$355k/year
+**Title**: Moving 40% of defects from Development to local saves ~$333k/year
 
 **Visual**: Two stacked bars side by side — "Today" and "Target". Annotate the dollar delta with a callout arrow.
 
 **Bullets**:
-- Today: 400 bugs/yr × avg cost $1,344 = **$538k/yr**
-- Target (PCE 70%): 400 bugs/yr × avg cost $464 = **$185k/yr**
-- **Annual savings from shift-left rework alone: $353k**
+- Today: 400 bugs/yr × avg cost $1,412 = **$565k/yr**
+- Target (PCE 75%): 400 bugs/yr × avg cost $581 = **$232k/yr**
+- **Annual savings from shift-left rework alone: $333k**
 - Same bug volume, different distribution
 
-**Speaker notes**: *"This is the central financial claim. Same number of bugs — we're not promising fewer bugs, just bugs found earlier. The 17x weighted-average defect cost drops to 5.8x. That delta, at our defect volume, is $353k a year."*
+**Speaker notes**: *"This is the central financial claim. Same number of bugs — we're not promising fewer bugs, just bugs found earlier. The 18x weighted-average defect cost drops to 7.45x. That delta, at our defect volume, is $333k a year."*
 
 **Source cells**: `ROI-Summary!Shift_Left_Savings`
 
@@ -100,19 +100,20 @@ This is the slide-by-slide outline for the management presentation. Build it in 
 
 ## Slide 6: How a bug fix actually works today
 
-**Title**: Every integration-stage bug triggers a 13-step workflow
+**Title**: Every Development-stage bug triggers a 13-step workflow
 
-**Visual**: The flowchart from `integration-fix-workflow-cost.md` — branch → fix → AI check → push → CI → PR → wait → review → rounds → approve → merge → redeploy → reverify
+**Visual**: The flowchart from `development-fix-workflow-cost.md` — branch → fix → AI check → push → CI → PR → wait → review → rounds → approve → merge → redeploy → reverify
 
 **Bullets**:
 - Average dev time per fix: **6-9 hours**
 - Average reviewer time per fix: **1-1.5 hours**
 - Pipeline retry rate: 30% (multiplies the above by 1.3x)
 - Per-fix cost: **~$729 of fully-loaded engineering time**
+- (Note: CI runs in step 6 but is non-gating, so it does not prevent the workflow from completing on broken code)
 
-**Speaker notes**: *"This is what every integration bug costs us. Not in theory — we counted the steps and the time. Each step is rational on its own. The aggregate is expensive."*
+**Speaker notes**: *"This is what every Development-env bug costs us. Not in theory — we counted the steps and the time. Each step is rational on its own. The aggregate is expensive."*
 
-**Source cells**: `Integration-Fix-Workflow!B5:B25`
+**Source cells**: `Development-Fix-Workflow!B5:B25`
 
 ---
 
@@ -125,10 +126,27 @@ This is the slide-by-slide outline for the management presentation. Build it in 
 **Bullets**:
 - Locally-caught bug: ~$78 in dev time, no PR workflow needed
 - **Per-bug delta: $651 ($729 − $78)**
-- For 120 integration bugs/yr × 67% shifted left: ~$52k/yr in workflow tax avoided
+- For 180 Development-env bugs/yr × 70% shifted left: ~$82k/yr in workflow tax avoided
 - (Subsumed in Pillar 1 if `use_bottom_up_multiplier` toggle is ON)
 
 **Speaker notes**: *"The 13-step workflow is appropriate risk control for changes flowing to production. But for a bug-fix that didn't need to exist in the first place — because it could have been caught locally — every step on this list is pure deadweight."*
+
+---
+
+## Slide 7b: Side finding — CI exists but doesn't gate deployment
+
+**Title**: An easy, complementary fix: turn on CI gating
+
+**Visual**: Simple flow comparing today's pipeline (CI fails → deploys anyway → caught in Dev at 15x) vs gated (CI fails → blocks deploy → caught in CI at 6.5x).
+
+**Bullets**:
+- Today: our CI runs builds, unit tests, and QA tests on every push — but does **not** stop deployment if they fail
+- Result: bugs CI *could* catch at 6.5x cost escape to Development env and cost 15x instead
+- Cost to fix: ~half a day of platform-engineering work to add a deployment gate
+- Annual benefit: ~$15-30k/year (5-10% of Development-stage rework cost)
+- **This does not replace the local-env investment**, but it's nearly free and should be done alongside
+
+**Speaker notes**: *"While we're talking about pipelines, one quick aside. Our CI runs and produces failing results — but those results don't gate the deployment. The code goes anyway. So we're paying for CI but only getting half its value. Turning gating on is an afternoon's work and saves us another $15-30k a year. We should do it as part of the rollout."*
 
 ---
 
@@ -327,7 +345,7 @@ This is the slide-by-slide outline for the management presentation. Build it in 
 - [ ] Replace placeholder defect distribution with the WIQL-query result
 - [ ] Replace placeholder PR cycle time with the ADO Analytics result
 - [ ] Replace placeholder workaround-self-assessment with the team's actual marks
-- [ ] Add 1-2 specific recent integration-bug examples ("remember when X happened…")
+- [ ] Add 1-2 specific recent Development-env-bug examples ("remember when X happened…")
 - [ ] Add the 2-3 specific Azure services you most want to emulate (and the parity status of each)
 - [ ] Confirm Docker pricing tier applicable to your org size
 - [ ] Customise success-metrics targets to be team-realistic (the 6/12-month columns are placeholders)
