@@ -9,12 +9,20 @@ Inputs,Cycle time target (min),2.0
 Computed,Weighted defect cost today (units),18.10
 Computed,Weighted defect cost target (units),7.45
 Computed,Local fix cost ($),$78.20
+Real Data,Rework items observed (4.25 mo),26
+Real Data,Avg PRs per rework item,3.04
+Real Data,Annualised rework items,73
+Real Data,Blended redo factor,0.804
+Real Data,Median build duration (min),4.0
+Real Data,Critical-path build duration (min),37.0
+Real Data,Effective pipeline duration used (min),37.0
 Savings,1. Shift-left rework,"$333,132"
 Savings,2. Sprint capacity,"$439,171"
-Savings,3. Pipeline retries,"$38,925"
+Savings,3. Pipeline retries,"$54,549"
 Savings,4. Workarounds,"$51,000"
-Savings,TOTAL ANNUAL SAVINGS,"$862,228"
+Savings,5. Rework cycles (real data),"$73,366"
+Savings,TOTAL ANNUAL SAVINGS,"$951,218"
 Investment,One-time investment,"$15,520"
 Investment,Annual ongoing cost,"$10,516"
-ROI,Net annual savings,"$851,712"
+ROI,Net annual savings,"$940,702"
 ROI,Payback period (months),0.2

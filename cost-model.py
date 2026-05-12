@@ -18,8 +18,9 @@ Design notes
   so formulas are readable: e.g. `=team_size * hourly_rate * ...` rather
   than `=Inputs!B5 * Inputs!B6 * ...`.
 
-- Numbers in this file are *placeholder defaults*. Real numbers come from
-  data-gathering-checklist.md.
+- The model is CALIBRATED with real team data (Jan-May 2026, ~4.25 months):
+  26 anonymised rework work-items across 8 developers, plus 24 measured
+  build durations. See the `Real-Bug-Data` and `Real-Build-Times` tabs.
 
 - The `use_bottom_up_multiplier` toggle on the Inputs tab switches between:
     TRUE  - development-stage cost is computed bottom-up from the
@@ -27,9 +28,21 @@ Design notes
     FALSE - development-stage cost uses IBM's textbook 15x multiplier and
             adds the workflow tax as a separate line (avoids double-counting).
 
+- The `use_real_data` toggle wires the model to the Real-Bug-Data and
+  Real-Build-Times tabs (rework rate, avg PRs per rework item, median
+  pipeline duration). Set to 0 to fall back to industry placeholders.
+
 Environment topology assumed: Local -> Development -> Staging -> Production.
 CI exists but does not gate deployment; CI-flagged bugs flow through to the
 Development environment where they are operationally caught and fixed.
+
+Rework workflow (from the team's documented 46-step process):
+- Steps 1-35  = dev-test cycle (repeated when a bug is caught BEFORE QA handoff)
+- Steps 36-40 = QA cycle       (repeated when a bug is caught BY QA, in addition to 1-35)
+- Steps 41-46 = master merge   (executed ONCE per work-item; not repeated for rework)
+
+So each rework cycle redoes ~35/46 (pre-QA) or ~40/46 (post-QA) of the process.
+The blended redo factor is controlled by `pct_rework_caught_pre_qa` on Inputs.
 """
 from __future__ import annotations
 
@@ -40,6 +53,126 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.workbook.defined_name import DefinedName
+
+
+# ---------------------------------------------------------------------------
+# Real team data (anonymised) — source: team-bug-data-raw.xlsx
+# Period: Jan 1 2026 - May 8 2026 (~4.25 months).  Real names masked Dev1..Dev8.
+# Each tuple is (developer_alias, work_item_id, pr_count).
+# ---------------------------------------------------------------------------
+
+REAL_BUG_DATA: list[tuple[str, int, int]] = [
+    ("Dev1", 42851, 7),
+    ("Dev1", 43844, 4),
+    ("Dev1", 44413, 2),
+    ("Dev1", 44858, 2),
+    ("Dev1", 44975, 2),
+    ("Dev1", 45977, 2),
+    ("Dev1", 44858, 2),
+    ("Dev2", 45225, 2),
+    ("Dev2", 43666, 6),
+    ("Dev2", 40653, 4),
+    ("Dev2", 45225, 2),
+    ("Dev2", 45751, 2),
+    ("Dev3", 45750, 2),
+    ("Dev3", 44848, 2),
+    ("Dev4", 43694, 6),
+    ("Dev4", 44032, 3),
+    ("Dev4", 44146, 3),
+    ("Dev4", 43403, 3),
+    ("Dev4", 40471, 3),
+    ("Dev4", 46247, 2),
+    ("Dev5", 42666, 6),
+    ("Dev5", 42665, 3),
+    ("Dev5", 45195, 3),
+    ("Dev5", 44045, 2),
+    ("Dev7", 43668, 2),
+    ("Dev8", 42665, 2),
+]
+
+# Real build durations from the team's Azure DevOps pipelines.
+# (build_name, duration_minutes)
+REAL_BUILD_TIMES: list[tuple[str, float]] = [
+    ("Build Nuget Packages", 6),
+    ("DripsBackend-PR-Build", 24),
+    ("Lead Processor Build", 9),
+    ("DripsBackend-Build", 10),
+    ("Api.Gateway", 4),
+    ("Api.Private", 4),
+    ("Api.Private.Numbers", 5),
+    ("Api.Public", 6),
+    ("DripsBackend Repo Dev", 37),
+    ("DripsBackend-Build-Dev", 22),
+    ("Processors.OutboundSMS - Dev", 4),
+    ("Services.Campaign - Dev", 2),
+    ("Providers.Services - Dev", 2),
+    ("Engine.Services - Dev", 2),
+    ("DAL.Services - Dev", 3),
+    ("Providers - Dev", 5),
+    ("Hosting - Dev", 3),
+    ("Engine - Dev", 3),
+    ("Services - Dev", 4),
+    ("Providers.Api.Bandwidth - Dev", 4),
+    ("Number Inventory API - dev", 6),
+    ("Common.Services - Dev", 2),
+    ("Dal - Dev", 2),
+    ("Processors.WebHooks", 5),
+]
+
+# The team's documented end-to-end "PR from local to development to master" process.
+# Step index, description, repeat_status:
+#   "once"      = executes once per work-item
+#   "pre_qa"    = repeated each rework cycle when dev catches the bug pre-QA
+#   "post_qa"   = repeated each rework cycle when QA catches the bug (in addition to pre_qa)
+#   "master"    = master-merge tail, not repeated per rework cycle
+PROCESS_STEPS: list[tuple[int, str, str]] = [
+    (1,  "Pull latest from development", "pre_qa"),
+    (2,  "Build local NuGet packages (PowerShell script)", "pre_qa"),
+    (3,  "Create feature branch + make code changes", "pre_qa"),
+    (4,  "Test locally using workarounds (or skip if not possible)", "pre_qa"),
+    (5,  "Run GitHub Copilot PR code analysis", "pre_qa"),
+    (6,  "Address issues from Copilot analysis", "pre_qa"),
+    (7,  "Re-run Copilot PR analysis to confirm clean", "pre_qa"),
+    (8,  "Push changes to remote", "pre_qa"),
+    (9,  "Create new PR with Copilot analysis attached", "pre_qa"),
+    (10, "Raise PR for approval + reviewer review", "pre_qa"),
+    (11, "Adjust code based on reviewer feedback", "pre_qa"),
+    (12, "Push additional changes + re-run Copilot analysis", "pre_qa"),
+    (13, "Reviewer re-reviews", "pre_qa"),
+    (14, "Approve + deploy to development environment", "pre_qa"),
+    (15, "Wait for several CI/CD builds per PR", "pre_qa"),
+    (16, "QA tests run automatically", "pre_qa"),
+    (17, "Developer investigates any failed QA tests", "pre_qa"),
+    (18, "Re-run failing QA test locally to confirm real vs false failure", "pre_qa"),
+    (19, "If real bug -> begin rework cycle", "pre_qa"),
+    (20, "Pull latest from development branch", "pre_qa"),
+    (21, "Rebuild NuGet packages", "pre_qa"),
+    (22, "Create new feature branch", "pre_qa"),
+    (23, "Address identified bug", "pre_qa"),
+    (24, "Test locally if possible", "pre_qa"),
+    (25, "Run Copilot code analysis report", "pre_qa"),
+    (26, "Address issues from Copilot report", "pre_qa"),
+    (27, "Re-run Copilot analysis", "pre_qa"),
+    (28, "Push changes back to remote", "pre_qa"),
+    (29, "Create new PR copying Copilot analysis", "pre_qa"),
+    (30, "Get approvers from other developers", "pre_qa"),
+    (31, "Address any further developer feedback", "pre_qa"),
+    (32, "Re-run Copilot analysis after fix", "pre_qa"),
+    (33, "Get developers to re-approve", "pre_qa"),
+    (34, "Approve PR + redeploy to development", "pre_qa"),
+    (35, "Wait for builds to complete for deployment", "pre_qa"),
+    (36, "Investigate any failing builds (QA test or real failure)", "post_qa"),
+    (37, "QA resource starts manual feature testing", "post_qa"),
+    (38, "If QA finds a bug not covered by tests -> new rework cycle", "post_qa"),
+    (39, "Confirm card is clean / ready for master merge", "post_qa"),
+    (40, "Plan master-merge steps", "post_qa"),
+    (41, "Cherry-pick PR of changes into master branch (happy path)", "master"),
+    (42, "If merge conflicts: pull latest from master + development", "master"),
+    (43, "Create topic branch off master, cherry-pick from development", "master"),
+    (44, "Address merge conflicts + push", "master"),
+    (45, "Get approvers to approve PR into master", "master"),
+    (46, "Merge to master (final)", "master"),
+]
 
 
 # ---------------------------------------------------------------------------
@@ -114,8 +247,12 @@ class Inputs:
     pipeline_duration_min: float = 25.0
     queue_wait_min: float = 5.0
     pipeline_cost_per_min: float = 0.015  # marginal MS-hosted derivation
-    parallel_jobs_extra: int = 5  # beyond the free 1
-    parallel_job_monthly_cost: float = 40.0  # MS-hosted private
+    parallel_jobs_extra: int = 5  # legacy single-bucket (used when use_real_data=0)
+    parallel_job_monthly_cost: float = 40.0  # legacy avg cost
+    ms_hosted_parallel_jobs: int = 5   # actual count of MS-hosted parallel jobs
+    self_hosted_parallel_jobs: int = 50  # actual count of self-hosted agents
+    ms_hosted_monthly_cost: float = 40.0   # $40/mo MS-hosted private
+    self_hosted_monthly_cost: float = 15.0  # $15/mo self-hosted
     pipeline_failure_rate: float = 0.30
     pct_retries_caused_by_local: float = 0.50  # of failures, % preventable
     pipeline_idle_recovery_factor: float = 0.5
@@ -137,8 +274,16 @@ class Inputs:
     apply_docker_license_cost: bool = True  # set False if <250-employee org
     annual_maintenance_hours: float = 100  # ~5% of one engineer
 
+    # Real-data integration
+    data_period_months: float = 4.25  # Jan 1 - May 8, 2026 in months
+    total_work_items_in_period: int = 200  # placeholder — pull from ADO Boards
+    pct_rework_caught_pre_qa: float = 0.60  # share of rework caught BEFORE QA handoff
+    redo_factor_pre_qa: float = 35.0 / 46.0   # ~76% of process repeated per dev-caught rework
+    redo_factor_post_qa: float = 40.0 / 46.0  # ~87% of process repeated per QA-caught rework
+
     # Strategy toggles
     use_bottom_up_multiplier: bool = True
+    use_real_data: bool = True
     discount_rate: float = 0.10  # for 3-year NPV
 
 
@@ -214,6 +359,9 @@ def build_workbook(inp: Inputs) -> Workbook:
     wb.remove(wb.active)
 
     build_inputs(wb, inp)
+    build_real_bug_data(wb, inp)
+    build_real_build_times(wb, inp)
+    build_process_steps(wb)
     build_defect_distribution(wb)
     build_bug_cost_by_stage(wb)
     build_development_fix_workflow(wb)
@@ -298,11 +446,15 @@ def build_inputs(wb: Workbook, inp: Inputs):
 
         ("--- Pipeline (ADO) ---", None, "", "", ""),
         ("Builds per dev per day", "builds_per_dev_per_day", inp.builds_per_dev_per_day, "builds", ""),
-        ("Pipeline duration (min/run)", "pipeline_duration_min", inp.pipeline_duration_min, "min", "Build + test + deploy"),
+        ("Pipeline duration (min/run) — placeholder", "pipeline_duration_min", inp.pipeline_duration_min, "min", "Overridden by real_median_build_min when use_real_data=1"),
         ("Queue wait (min/run)", "queue_wait_min", inp.queue_wait_min, "min", "Pre-start"),
         ("Pipeline compute cost per min", "pipeline_cost_per_min", inp.pipeline_cost_per_min, "$/min", "MS-hosted derivation"),
-        ("Extra parallel jobs purchased", "parallel_jobs_extra", inp.parallel_jobs_extra, "jobs", "Beyond the free 1"),
-        ("Parallel job monthly cost", "parallel_job_monthly_cost", inp.parallel_job_monthly_cost, "$/mo", "$40 MS-hosted, $15 self-hosted"),
+        ("Extra parallel jobs (legacy single bucket)", "parallel_jobs_extra", inp.parallel_jobs_extra, "jobs", "Used only if use_real_data=0"),
+        ("Parallel job monthly cost (legacy avg)", "parallel_job_monthly_cost", inp.parallel_job_monthly_cost, "$/mo", "Used only if use_real_data=0"),
+        ("MS-hosted parallel jobs", "ms_hosted_parallel_jobs", inp.ms_hosted_parallel_jobs, "jobs", "Real count from team — 5"),
+        ("Self-hosted parallel jobs", "self_hosted_parallel_jobs", inp.self_hosted_parallel_jobs, "jobs", "Real count from team — ~50"),
+        ("MS-hosted monthly cost", "ms_hosted_monthly_cost", inp.ms_hosted_monthly_cost, "$/mo", "$40/mo per MS-hosted private job"),
+        ("Self-hosted monthly cost", "self_hosted_monthly_cost", inp.self_hosted_monthly_cost, "$/mo", "~$15/mo amortised hardware + power"),
         ("Pipeline failure rate", "pipeline_failure_rate", inp.pipeline_failure_rate, "frac", "DORA change-failure rate"),
         ("% of failures caused by missing local env", "pct_retries_caused_by_local", inp.pct_retries_caused_by_local, "frac", "Recoverable share"),
         ("Pipeline idle recovery factor", "pipeline_idle_recovery_factor", inp.pipeline_idle_recovery_factor, "frac", ""),
@@ -324,8 +476,16 @@ def build_inputs(wb: Workbook, inp: Inputs):
         ("Apply Docker license cost? (1=yes, 0=no)", "apply_docker_license_cost", 1 if inp.apply_docker_license_cost else 0, "0/1", "0 for small org or free alternatives"),
         ("Annual maintenance hours", "annual_maintenance_hours", inp.annual_maintenance_hours, "hrs/yr", "~5% of one engineer"),
 
+        ("--- Real-Data Calibration (Jan-May 2026) ---", None, "", "", ""),
+        ("Data period (months)", "data_period_months", inp.data_period_months, "months", "Jan 1 - May 8 2026 = ~4.25 mo"),
+        ("Total work items in period (est.)", "total_work_items_in_period", inp.total_work_items_in_period, "items", "Pull from ADO Boards for this period"),
+        ("% of rework caught pre-QA-handoff", "pct_rework_caught_pre_qa", inp.pct_rework_caught_pre_qa, "frac", "Remainder caught by QA; both redo most of the 46-step process"),
+        ("Redo factor — dev-caught (steps 1-35 of 46)", "redo_factor_pre_qa", inp.redo_factor_pre_qa, "frac", "Pre-QA bugs repeat ~76% of the process"),
+        ("Redo factor — QA-caught (steps 1-40 of 46)", "redo_factor_post_qa", inp.redo_factor_post_qa, "frac", "Post-QA bugs repeat ~87% of the process"),
+
         ("--- Strategy Toggles ---", None, "", "", ""),
         ("Use bottom-up multiplier (1=yes, 0=no)", "use_bottom_up_multiplier", 1 if inp.use_bottom_up_multiplier else 0, "0/1", "1 = compute integration multiplier from workflow tab"),
+        ("Use real team data (1=yes, 0=no)", "use_real_data", 1 if inp.use_real_data else 0, "0/1", "1 = source pipeline duration, rework rate, PR cost from real tabs"),
         ("Discount rate for NPV", "discount_rate", inp.discount_rate, "frac", "10% default"),
     ]
 
@@ -359,6 +519,263 @@ def build_inputs(wb: Workbook, inp: Inputs):
             ref = f"Inputs!$B${row}"
             dn = DefinedName(name=name, attr_text=ref)
             wb.defined_names[name] = dn
+        row += 1
+
+
+# ---------------------------------------------------------------------------
+# Real-Bug-Data sheet — anonymised rework items + summary stats
+# ---------------------------------------------------------------------------
+
+def build_real_bug_data(wb: Workbook, inp: Inputs):
+    ws = wb.create_sheet("Real-Bug-Data")
+    widen(ws, {"A": 12, "B": 14, "C": 14, "D": 56})
+
+    ws["A1"] = "Real Rework Data (anonymised) — Jan 1 to May 8, 2026"
+    ws["A1"].font = Font(bold=True, size=14)
+    ws.merge_cells("A1:D1")
+    ws["A2"] = "Source: team-bug-data-raw.xlsx (kept outside the repo). Developer names masked Dev1..Dev8."
+    ws["A2"].font = NOTE_FONT
+    ws.merge_cells("A2:D2")
+
+    header_row(ws, 4, ["Developer", "Work Item", "PR Count", "Notes"])
+
+    row = 5
+    first_data_row = row
+    for dev, wi, pr_count in REAL_BUG_DATA:
+        ws.cell(row=row, column=1, value=dev).border = BORDER
+        ws.cell(row=row, column=2, value=wi).border = BORDER
+        c = ws.cell(row=row, column=3, value=pr_count)
+        c.border = BORDER
+        c.number_format = "#,##0"
+        ws.cell(row=row, column=4, value="").border = BORDER
+        row += 1
+    last_data_row = row - 1
+
+    row += 1
+    section_row(ws, row, "Summary Statistics (rework items only)", cols=4)
+    row += 1
+    ws.cell(row=row, column=1, value="Rework items observed").border = BORDER
+    ws.cell(row=row, column=3, value=f"=COUNTA(B{first_data_row}:B{last_data_row})").number_format = "#,##0"
+    items_cell = f"C{row}"
+    wb.defined_names["real_rework_items_count"] = DefinedName(
+        name="real_rework_items_count",
+        attr_text=f"'Real-Bug-Data'!$C${row}",
+    )
+    row += 1
+    ws.cell(row=row, column=1, value="Total PRs across rework items").border = BORDER
+    ws.cell(row=row, column=3, value=f"=SUM(C{first_data_row}:C{last_data_row})").number_format = "#,##0"
+    total_prs_cell = f"C{row}"
+    wb.defined_names["real_rework_prs_total"] = DefinedName(
+        name="real_rework_prs_total",
+        attr_text=f"'Real-Bug-Data'!$C${row}",
+    )
+    row += 1
+    ws.cell(row=row, column=1, value="Mean PRs per rework item").border = BORDER
+    ws.cell(row=row, column=3, value=f"={total_prs_cell}/{items_cell}").number_format = "0.00"
+    avg_prs_cell = f"C{row}"
+    wb.defined_names["real_avg_prs_per_rework"] = DefinedName(
+        name="real_avg_prs_per_rework",
+        attr_text=f"'Real-Bug-Data'!$C${row}",
+    )
+    row += 1
+    ws.cell(row=row, column=1, value="Median PRs per rework item").border = BORDER
+    ws.cell(row=row, column=3, value=f"=MEDIAN(C{first_data_row}:C{last_data_row})").number_format = "0.00"
+    row += 1
+    ws.cell(row=row, column=1, value="Max PRs per rework item").border = BORDER
+    ws.cell(row=row, column=3, value=f"=MAX(C{first_data_row}:C{last_data_row})").number_format = "#,##0"
+    row += 1
+    ws.cell(row=row, column=1, value="Min PRs per rework item").border = BORDER
+    ws.cell(row=row, column=3, value=f"=MIN(C{first_data_row}:C{last_data_row})").number_format = "#,##0"
+    row += 2
+
+    section_row(ws, row, "Annualised Projection", cols=4)
+    row += 1
+    ws.cell(row=row, column=1, value="Annualised rework items per year").border = BORDER
+    ws.cell(row=row, column=3, value=f"={items_cell}*12/data_period_months").number_format = "#,##0"
+    annual_rework_cell = f"C{row}"
+    wb.defined_names["real_rework_items_annual"] = DefinedName(
+        name="real_rework_items_annual",
+        attr_text=f"'Real-Bug-Data'!$C${row}",
+    )
+    row += 1
+    ws.cell(row=row, column=1, value="Annualised extra PR cycles (rework only)").border = BORDER
+    ws.cell(row=row, column=3, value=f"={annual_rework_cell}*({avg_prs_cell}-1)").number_format = "#,##0"
+    extra_prs_cell = f"C{row}"
+    wb.defined_names["real_extra_pr_cycles_annual"] = DefinedName(
+        name="real_extra_pr_cycles_annual",
+        attr_text=f"'Real-Bug-Data'!$C${row}",
+    )
+    row += 1
+    ws.cell(row=row, column=1, value="Rework rate (% of work items needing rework)").border = BORDER
+    ws.cell(row=row, column=3, value=f"={items_cell}/total_work_items_in_period").number_format = "0.0%"
+    row += 2
+
+    section_row(ws, row, "Blended Redo Factor", cols=4)
+    row += 1
+    ws.cell(row=row, column=1, value="Blended redo factor (pre-QA share × pre-QA + post-QA share × post-QA)").border = BORDER
+    ws.cell(
+        row=row,
+        column=3,
+        value="=pct_rework_caught_pre_qa*redo_factor_pre_qa+(1-pct_rework_caught_pre_qa)*redo_factor_post_qa",
+    ).number_format = "0.000"
+    wb.defined_names["redo_factor_blended"] = DefinedName(
+        name="redo_factor_blended",
+        attr_text=f"'Real-Bug-Data'!$C${row}",
+    )
+    row += 2
+
+    section_row(ws, row, "Per-Developer Breakdown", cols=4)
+    row += 1
+    header_row(ws, row, ["Developer", "Rework items", "Sum PRs", "Avg PRs/item"])
+    row += 1
+    devs = sorted({d for d, _, _ in REAL_BUG_DATA})
+    for dev in devs:
+        ws.cell(row=row, column=1, value=dev).border = BORDER
+        ws.cell(row=row, column=2, value=f'=COUNTIF(A{first_data_row}:A{last_data_row},"{dev}")').number_format = "#,##0"
+        ws.cell(row=row, column=3, value=f'=SUMIF(A{first_data_row}:A{last_data_row},"{dev}",C{first_data_row}:C{last_data_row})').number_format = "#,##0"
+        ws.cell(row=row, column=4, value=f"=IF(B{row}=0,0,C{row}/B{row})").number_format = "0.00"
+        for col in (3, 4):
+            ws.cell(row=row, column=col).border = BORDER
+        ws.cell(row=row, column=2).border = BORDER
+        row += 1
+
+
+# ---------------------------------------------------------------------------
+# Real-Build-Times sheet — measured ADO pipeline durations
+# ---------------------------------------------------------------------------
+
+def build_real_build_times(wb: Workbook, inp: Inputs):
+    ws = wb.create_sheet("Real-Build-Times")
+    widen(ws, {"A": 38, "B": 16, "C": 50})
+
+    ws["A1"] = "Real Pipeline Build Durations (measured)"
+    ws["A1"].font = Font(bold=True, size=14)
+    ws.merge_cells("A1:C1")
+    ws["A2"] = "Source: team-bug-data-raw.xlsx, 'Builds' tab. Most components run 2-6 min; PR-build and dev-deploy dominate."
+    ws["A2"].font = NOTE_FONT
+    ws.merge_cells("A2:C2")
+
+    header_row(ws, 4, ["Build name", "Duration (min)", "Notes"])
+
+    row = 5
+    first_row = row
+    for name, mins in REAL_BUILD_TIMES:
+        ws.cell(row=row, column=1, value=name).border = BORDER
+        c = ws.cell(row=row, column=2, value=mins)
+        c.number_format = "0.0"
+        c.border = BORDER
+        ws.cell(row=row, column=3, value="").border = BORDER
+        row += 1
+    last_row = row - 1
+
+    row += 1
+    section_row(ws, row, "Summary Statistics", cols=3)
+    row += 1
+    ws.cell(row=row, column=1, value="Build count").border = BORDER
+    ws.cell(row=row, column=2, value=f"=COUNT(B{first_row}:B{last_row})").number_format = "#,##0"
+    row += 1
+    ws.cell(row=row, column=1, value="Median build duration (min)").border = BORDER
+    ws.cell(row=row, column=2, value=f"=MEDIAN(B{first_row}:B{last_row})").number_format = "0.0"
+    median_cell = f"B{row}"
+    wb.defined_names["real_median_build_min"] = DefinedName(
+        name="real_median_build_min",
+        attr_text=f"'Real-Build-Times'!$B${row}",
+    )
+    row += 1
+    ws.cell(row=row, column=1, value="Mean build duration (min)").border = BORDER
+    ws.cell(row=row, column=2, value=f"=AVERAGE(B{first_row}:B{last_row})").number_format = "0.0"
+    wb.defined_names["real_mean_build_min"] = DefinedName(
+        name="real_mean_build_min",
+        attr_text=f"'Real-Build-Times'!$B${row}",
+    )
+    row += 1
+    ws.cell(row=row, column=1, value="P95 build duration (min)").border = BORDER
+    ws.cell(row=row, column=2, value=f"=PERCENTILE.INC(B{first_row}:B{last_row},0.95)").number_format = "0.0"
+    row += 1
+    ws.cell(row=row, column=1, value="Max build duration (min)").border = BORDER
+    ws.cell(row=row, column=2, value=f"=MAX(B{first_row}:B{last_row})").number_format = "0.0"
+    wb.defined_names["real_max_build_min"] = DefinedName(
+        name="real_max_build_min",
+        attr_text=f"'Real-Build-Times'!$B${row}",
+    )
+    row += 1
+    ws.cell(row=row, column=1, value="Min build duration (min)").border = BORDER
+    ws.cell(row=row, column=2, value=f"=MIN(B{first_row}:B{last_row})").number_format = "0.0"
+    row += 1
+    ws.cell(row=row, column=1, value="Sum of all builds (worst-case per PR)").border = BORDER
+    ws.cell(row=row, column=2, value=f"=SUM(B{first_row}:B{last_row})").number_format = "0.0"
+    row += 1
+    ws.cell(
+        row=row,
+        column=1,
+        value="Critical-path build (max of PR-build + dev-deploy; bottleneck per PR)",
+    ).border = BORDER
+    # The two longest builds are typically the PR-build and the deploy-to-dev
+    # build. Approximate critical path as the largest individual build (since
+    # most others run in parallel within their stage).
+    ws.cell(row=row, column=2, value=f"=MAX(B{first_row}:B{last_row})").number_format = "0.0"
+    wb.defined_names["real_critical_path_min"] = DefinedName(
+        name="real_critical_path_min",
+        attr_text=f"'Real-Build-Times'!$B${row}",
+    )
+    row += 2
+
+    section_row(ws, row, "Effective Pipeline Duration (used by model)", cols=3)
+    row += 1
+    ws.cell(row=row, column=1, value="Effective pipeline duration").border = BORDER
+    ws.cell(
+        row=row,
+        column=2,
+        value="=IF(use_real_data=1,real_critical_path_min,pipeline_duration_min)",
+    ).number_format = "0.0"
+    ws.cell(
+        row=row,
+        column=3,
+        value=(
+            "Critical-path build duration (the longest single build the developer "
+            "must wait for) when use_real_data=1; placeholder otherwise. "
+            "Median/mean are far too optimistic for wall-clock wait per PR."
+        ),
+    ).font = NOTE_FONT
+    wb.defined_names["effective_pipeline_min"] = DefinedName(
+        name="effective_pipeline_min",
+        attr_text=f"'Real-Build-Times'!$B${row}",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Process-Steps sheet — the team's documented 46-step process
+# ---------------------------------------------------------------------------
+
+def build_process_steps(wb: Workbook):
+    ws = wb.create_sheet("Process-Steps")
+    widen(ws, {"A": 6, "B": 70, "C": 18, "D": 22})
+
+    ws["A1"] = "Team's Documented 46-Step Process — and What Repeats on Rework"
+    ws["A1"].font = Font(bold=True, size=14)
+    ws.merge_cells("A1:D1")
+    ws["A2"] = (
+        "Steps 1-35 are repeated when a developer catches a bug pre-QA-handoff. "
+        "Steps 36-40 are additionally repeated when QA finds the bug post-handoff. "
+        "Steps 41-46 (master merge) run ONCE per work-item and are not repeated for rework."
+    )
+    ws["A2"].font = NOTE_FONT
+    ws.merge_cells("A2:D2")
+
+    header_row(ws, 4, ["#", "Step", "Phase", "Repeats per rework cycle?"])
+
+    row = 5
+    label_map = {
+        "pre_qa": ("Dev-test (1-35)", "Yes — every rework cycle"),
+        "post_qa": ("QA cycle (36-40)", "Only if QA catches the bug"),
+        "master": ("Master merge (41-46)", "No — once per work-item"),
+    }
+    for idx, desc, status in PROCESS_STEPS:
+        ws.cell(row=row, column=1, value=idx).border = BORDER
+        ws.cell(row=row, column=2, value=desc).border = BORDER
+        phase, repeats = label_map[status]
+        ws.cell(row=row, column=3, value=phase).border = BORDER
+        ws.cell(row=row, column=4, value=repeats).border = BORDER
         row += 1
 
 
@@ -631,6 +1048,48 @@ def build_development_fix_workflow(wb: Workbook):
     ws.cell(row=row, column=5, value=f"={shifted_cell}*{per_fix_tax_cell}").number_format = "$#,##0"
     dn2 = DefinedName(name="annual_workflow_tax", attr_text=f"'Development-Fix-Workflow'!$E${row}")
     wb.defined_names["annual_workflow_tax"] = dn2
+    row += 2
+
+    # ---- Rework cycles (calibrated from real team data) ----------------------
+    section_row(ws, row, "Rework Cycles (calibrated from Real-Bug-Data tab)", cols=6)
+    row += 1
+    ws.cell(row=row, column=1, value="Annualised rework items (real data)")
+    ws.cell(row=row, column=5, value="=real_rework_items_annual").number_format = "#,##0"
+    rework_items_cell = f"E{row}"
+    row += 1
+    ws.cell(row=row, column=1, value="Avg PRs per rework item (real)")
+    ws.cell(row=row, column=5, value="=real_avg_prs_per_rework").number_format = "0.00"
+    avg_prs_ref = f"E{row}"
+    row += 1
+    ws.cell(row=row, column=1, value="Extra PR cycles per rework item (avg - 1)")
+    ws.cell(row=row, column=5, value=f"={avg_prs_ref}-1").number_format = "0.00"
+    extra_per_item_cell = f"E{row}"
+    row += 1
+    ws.cell(row=row, column=1, value="Blended redo factor")
+    ws.cell(row=row, column=5, value="=redo_factor_blended").number_format = "0.000"
+    redo_cell = f"E{row}"
+    row += 1
+    ws.cell(row=row, column=1, value="Cost per extra rework cycle ($)")
+    ws.cell(row=row, column=5, value=f"=development_fix_total*{redo_cell}").number_format = "$#,##0.00"
+    cost_per_extra_cell = f"E{row}"
+    row += 1
+    ws.cell(row=row, column=1, value="Annual rework workflow cost (total)")
+    ws.cell(
+        row=row,
+        column=5,
+        value=f"={rework_items_cell}*{extra_per_item_cell}*{cost_per_extra_cell}",
+    ).number_format = "$#,##0"
+    rework_total_cell = f"E{row}"
+    row += 1
+    total_row(ws, row, cols=6)
+    ws.cell(row=row, column=1, value="ANNUAL REWORK-CYCLE TAX RECOVERABLE (real data x preventable)")
+    ws.cell(
+        row=row,
+        column=5,
+        value=f"={rework_total_cell}*pct_preventable_with_local",
+    ).number_format = "$#,##0"
+    dn3 = DefinedName(name="annual_rework_savings", attr_text=f"'Development-Fix-Workflow'!$E${row}")
+    wb.defined_names["annual_rework_savings"] = dn3
 
 
 # ---------------------------------------------------------------------------
@@ -654,8 +1113,13 @@ def build_pipeline_cost(wb: Workbook):
     ws.cell(row=row, column=2, value="=team_size*builds_per_dev_per_day*working_days_per_year").number_format = "#,##0"
     annual_builds_cell = f"B{row}"
     row += 1
+    ws.cell(row=row, column=1, value="Effective pipeline duration (min)")
+    ws.cell(row=row, column=2, value="=effective_pipeline_min").number_format = "0.0"
+    ws.cell(row=row, column=3, value="Real-Build-Times median when use_real_data=1; else placeholder").font = NOTE_FONT
+    effective_pipe_cell = f"B{row}"
+    row += 1
     ws.cell(row=row, column=1, value="Total pipeline minutes/year")
-    ws.cell(row=row, column=2, value=f"={annual_builds_cell}*pipeline_duration_min").number_format = "#,##0"
+    ws.cell(row=row, column=2, value=f"={annual_builds_cell}*{effective_pipe_cell}").number_format = "#,##0"
     annual_minutes_cell = f"B{row}"
     row += 1
     ws.cell(row=row, column=1, value="Compute cost (per-min)")
@@ -663,14 +1127,23 @@ def build_pipeline_cost(wb: Workbook):
     compute_cost_cell = f"B{row}"
     row += 1
     ws.cell(row=row, column=1, value="Parallel-job subscription")
-    ws.cell(row=row, column=2, value="=parallel_jobs_extra*parallel_job_monthly_cost*12").number_format = "$#,##0"
+    ws.cell(
+        row=row,
+        column=2,
+        value=(
+            "=IF(use_real_data=1,"
+            "(ms_hosted_parallel_jobs*ms_hosted_monthly_cost+self_hosted_parallel_jobs*self_hosted_monthly_cost)*12,"
+            "parallel_jobs_extra*parallel_job_monthly_cost*12)"
+        ),
+    ).number_format = "$#,##0"
+    ws.cell(row=row, column=3, value="Split into MS-hosted + self-hosted when real data is on").font = NOTE_FONT
     parallel_jobs_cell = f"B{row}"
     row += 2
 
     section_row(ws, row, "2. Engineer Idle Time", cols=3)
     row += 1
     ws.cell(row=row, column=1, value="Idle hours/year (queue + build wait)")
-    ws.cell(row=row, column=2, value=f"={annual_builds_cell}*(queue_wait_min+pipeline_duration_min)/60").number_format = "#,##0"
+    ws.cell(row=row, column=2, value=f"={annual_builds_cell}*(queue_wait_min+{effective_pipe_cell})/60").number_format = "#,##0"
     idle_hours_cell = f"B{row}"
     row += 1
     ws.cell(row=row, column=1, value="Idle cost (with recovery factor)")
@@ -689,8 +1162,14 @@ def build_pipeline_cost(wb: Workbook):
     preventable_failures_cell = f"B{row}"
     row += 1
     ws.cell(row=row, column=1, value="Cost per retry (compute + idle)")
-    ws.cell(row=row, column=2, value=("=(pipeline_duration_min*pipeline_cost_per_min)"
-                                          "+((queue_wait_min+pipeline_duration_min)/60*hourly_rate*pipeline_idle_recovery_factor)")).number_format = "$#,##0.00"
+    ws.cell(
+        row=row,
+        column=2,
+        value=(
+            f"=({effective_pipe_cell}*pipeline_cost_per_min)"
+            f"+((queue_wait_min+{effective_pipe_cell})/60*hourly_rate*pipeline_idle_recovery_factor)"
+        ),
+    ).number_format = "$#,##0.00"
     cost_per_retry_cell = f"B{row}"
     row += 1
     ws.cell(row=row, column=1, value="Annual retry cost (recoverable)")
@@ -873,9 +1352,15 @@ def build_roi_summary(wb: Workbook):
     ws.cell(row=row, column=3, value="From Workarounds tab").font = NOTE_FONT
     row += 1
 
+    ws.cell(row=row, column=1, value="6. Rework cycles avoided (real-data calibrated)")
+    ws.cell(row=row, column=2, value="=annual_rework_savings").number_format = "$#,##0"
+    p6 = f"B{row}"
+    ws.cell(row=row, column=3, value="Extra PR cycles measured in Jan-May 2026 data").font = NOTE_FONT
+    row += 1
+
     total_row(ws, row, cols=3)
     ws.cell(row=row, column=1, value="TOTAL ANNUAL SAVINGS")
-    ws.cell(row=row, column=2, value=f"={p1}+{p2}+{p3}+{p4}+{p5}").number_format = "$#,##0"
+    ws.cell(row=row, column=2, value=f"={p1}+{p2}+{p3}+{p4}+{p5}+{p6}").number_format = "$#,##0"
     total_savings_cell = f"B{row}"
     row += 2
 
@@ -1034,12 +1519,21 @@ def write_csv(inp: Inputs, path: str):
     )
     sprint_savings = annual_hours_lost * inp.hourly_rate * inp.context_switch_multiplier
 
+    # Effective pipeline duration uses real data when toggle is on.
+    pr_counts = [p for _, _, p in REAL_BUG_DATA]
+    real_items = len(pr_counts)
+    real_avg_prs = sum(pr_counts) / real_items if real_items else 0.0
+    build_mins = [m for _, m in REAL_BUILD_TIMES]
+    real_median_build = sorted(build_mins)[len(build_mins) // 2] if build_mins else inp.pipeline_duration_min
+    real_critical_path = max(build_mins) if build_mins else inp.pipeline_duration_min
+    effective_pipeline_min = real_critical_path if inp.use_real_data else inp.pipeline_duration_min
+
     annual_builds = inp.team_size * inp.builds_per_dev_per_day * inp.working_days_per_year
     failed_builds = annual_builds * inp.pipeline_failure_rate
     preventable_failures = failed_builds * inp.pct_retries_caused_by_local
     cost_per_retry = (
-        inp.pipeline_duration_min * inp.pipeline_cost_per_min
-        + (inp.queue_wait_min + inp.pipeline_duration_min) / 60
+        effective_pipeline_min * inp.pipeline_cost_per_min
+        + (inp.queue_wait_min + effective_pipeline_min) / 60
         * inp.hourly_rate * inp.pipeline_idle_recovery_factor
     )
     pipeline_savings = preventable_failures * cost_per_retry
@@ -1048,8 +1542,36 @@ def write_csv(inp: Inputs, path: str):
         inp.workaround_hours_per_week_total * inp.workaround_weeks_per_year * inp.hourly_rate
     )
 
+    # Rework-cycle savings calibrated from real data.
+    annual_rework_items = real_items * 12 / inp.data_period_months if inp.data_period_months else 0
+    redo_factor_blended = (
+        inp.pct_rework_caught_pre_qa * inp.redo_factor_pre_qa
+        + (1 - inp.pct_rework_caught_pre_qa) * inp.redo_factor_post_qa
+    )
+    # development_fix_total (per single PR cycle) — replicate the workflow sum
+    workflow_min = (
+        inp.triage_min + inp.branch_repro_min + inp.code_fix_min + inp.ai_check_min
+        + inp.push_wait_min * inp.push_idle_factor + inp.pr_create_min
+        + inp.review_wait_hours * 60 * inp.review_wait_idle_factor
+        + inp.reviewer_review_min
+        + inp.review_round_dev_min * inp.review_rounds
+        + inp.review_round_reviewer_min * inp.review_rounds
+        + inp.approve_merge_min
+        + inp.redeploy_min * inp.redeploy_idle_factor
+        + inp.reverify_min
+    )
+    workflow_cost = workflow_min / 60 * inp.hourly_rate + inp.ai_check_tool_cost_per_run
+    workflow_cost *= (1 + inp.retry_rate)
+    workflow_cost += (inp.team_size - 1) * 0.25 * inp.hourly_rate  # contention
+    workflow_cost += (22 / 60) * inp.hourly_rate  # context reload
+    workflow_cost += effective_pipeline_min * inp.pipeline_cost_per_min * (1 + inp.retry_rate)
+    extra_prs_per_item = max(real_avg_prs - 1, 0)
+    cost_per_extra_cycle = workflow_cost * redo_factor_blended
+    annual_rework_workflow_cost = annual_rework_items * extra_prs_per_item * cost_per_extra_cycle
+    rework_savings = annual_rework_workflow_cost * inp.pct_preventable_with_local
+
     total_annual_savings = (
-        shift_left_savings + sprint_savings + pipeline_savings + workaround_savings
+        shift_left_savings + sprint_savings + pipeline_savings + workaround_savings + rework_savings
     )
 
     one_time = (
@@ -1079,10 +1601,18 @@ def write_csv(inp: Inputs, path: str):
         w.writerow(["Computed", "Weighted defect cost today (units)", f"{weighted_today:.2f}"])
         w.writerow(["Computed", "Weighted defect cost target (units)", f"{weighted_target:.2f}"])
         w.writerow(["Computed", "Local fix cost ($)", f"${local_fix_cost:,.2f}"])
+        w.writerow(["Real Data", "Rework items observed (4.25 mo)", real_items])
+        w.writerow(["Real Data", "Avg PRs per rework item", f"{real_avg_prs:.2f}"])
+        w.writerow(["Real Data", "Annualised rework items", f"{annual_rework_items:,.0f}"])
+        w.writerow(["Real Data", "Blended redo factor", f"{redo_factor_blended:.3f}"])
+        w.writerow(["Real Data", "Median build duration (min)", f"{real_median_build:.1f}"])
+        w.writerow(["Real Data", "Critical-path build duration (min)", f"{real_critical_path:.1f}"])
+        w.writerow(["Real Data", "Effective pipeline duration used (min)", f"{effective_pipeline_min:.1f}"])
         w.writerow(["Savings", "1. Shift-left rework", f"${shift_left_savings:,.0f}"])
         w.writerow(["Savings", "2. Sprint capacity", f"${sprint_savings:,.0f}"])
         w.writerow(["Savings", "3. Pipeline retries", f"${pipeline_savings:,.0f}"])
         w.writerow(["Savings", "4. Workarounds", f"${workaround_savings:,.0f}"])
+        w.writerow(["Savings", "5. Rework cycles (real data)", f"${rework_savings:,.0f}"])
         w.writerow(["Savings", "TOTAL ANNUAL SAVINGS", f"${total_annual_savings:,.0f}"])
         w.writerow(["Investment", "One-time investment", f"${one_time:,.0f}"])
         w.writerow(["Investment", "Annual ongoing cost", f"${annual_cost:,.0f}"])
@@ -1094,11 +1624,15 @@ def write_csv(inp: Inputs, path: str):
         "sprint_savings": sprint_savings,
         "pipeline_savings": pipeline_savings,
         "workaround_savings": workaround_savings,
+        "rework_savings": rework_savings,
         "total_annual_savings": total_annual_savings,
         "one_time": one_time,
         "annual_cost": annual_cost,
         "net_annual": net_annual,
         "payback_months": payback_months,
+        "real_items_observed": real_items,
+        "real_avg_prs_per_item": real_avg_prs,
+        "real_median_build_min": real_median_build,
     }
 
 

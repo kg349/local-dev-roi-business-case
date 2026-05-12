@@ -125,6 +125,61 @@ Compare to:
 
 ---
 
+## Calibration from real team data (Jan–May 2026)
+
+The 13-step diagram above is a *simplification*. The team's actual, documented end-to-end process for getting a bug fix from local → Development → master is **46 steps long**, captured in `team-bug-data-raw.xlsx → Development Process` and reproduced in the `Process-Steps` tab of `cost-model.xlsx`.
+
+**The 46-step process splits into three phases:**
+
+| Phase | Steps | What it covers | Repeats per rework cycle? |
+|---|---|---|---|
+| **Dev-test cycle** | 1–35 | Pull, branch, fix, push, PR, approve, deploy to Dev, wait for CI/QA-test builds, dev investigates failures | **Yes** if developer catches the bug pre-QA-handoff |
+| **QA cycle** | 36–40 | Builds complete, QA resource takes the feature, QA finds bugs not covered by automated tests | **Yes** (in addition to 1–35) if QA catches the bug post-handoff |
+| **Master merge** | 41–46 | Cherry-pick into master, address merge conflicts, master PR approval | **No** — runs once per work-item, not repeated for rework |
+
+This gives us a **blended redo factor** per rework cycle:
+
+```
+redo_factor = pct_caught_pre_qa × (35/46) + pct_caught_post_qa × (40/46)
+            = 0.60 × 0.761       + 0.40 × 0.870
+            ≈ 0.80
+```
+
+So each additional rework PR consumes roughly **80% of the cost of an end-to-end fix**, not 100% — the master-merge tail only happens once.
+
+### Measured rework rate
+
+The anonymised data covers **Jan 1, 2026 – May 8, 2026 (~4.25 months)** and shows:
+
+| Metric | Value | Source |
+|---|---|---|
+| Work items needing >1 PR (rework) | **26 items** | `Real-Bug-Data` tab |
+| Total extra PRs across these items | **79 PRs** (so 53 extra beyond first) | `Real-Bug-Data` tab |
+| **Mean PRs per rework item** | **3.04** | `Real-Bug-Data` tab |
+| Median PRs per rework item | 2 | Long-tail distribution |
+| Max PRs per rework item | 7 | One work item needed 7 PRs |
+| Developers represented | 7 of 8 | One dev had no rework in this period |
+
+**Annualised:** `26 × 12 / 4.25 ≈ 73 rework items per year`, with `73 × (3.04 − 1) × 0.80 ≈ 119` extra rework PR cycles per year that would not exist with proper local verification.
+
+### Real-data rework workflow tax
+
+```
+extra_rework_cost = 73 items × (3.04 − 1) extra PRs × 0.80 redo factor × $729 per PR
+                  ≈ $86,750/year (total rework cost)
+
+recoverable = $86,750 × 0.70 (pct preventable with local env)
+            ≈ $60,700/year
+```
+
+This is what the `cost-model.xlsx → ROI-Summary` line 6 ("Rework cycles avoided") reports. It is **additive** to the shift-left rework savings (line 1) because the shift-left line counts the cost of *the first* development-stage PR cycle per bug; this line counts the cost of *the additional* cycles real data shows we're paying.
+
+### Important caveat from the team
+
+The user clarified that a rework cycle does *not* restart the entire 46-step process — steps 41–46 (master merge) only happen once at the end. The model's `redo_factor_pre_qa` (0.761) and `redo_factor_post_qa` (0.870) inputs encode this. You can adjust the pre-QA / post-QA split via `pct_rework_caught_pre_qa` on the `Inputs` tab to tune how aggressively the rework cost is computed.
+
+---
+
 ## Annual workflow tax (the savings lever)
 
 Of all the time spent on the development-fix workflow each year, what portion would *vanish* if the bug were caught locally?

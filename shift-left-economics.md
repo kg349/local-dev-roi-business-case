@@ -4,6 +4,8 @@
 
 The same defect costs **15x more** to fix when caught in our Development environment than when caught locally, and **100x more** when it escapes to production. Our team currently catches ~35% of defects locally; elite teams catch 80%+. Closing that gap is the single largest available source of engineering savings.
 
+> **Calibrated with real team data.** This document is anchored in industry curves *and* the Jan–May 2026 anonymised work-item data captured in `Real-Bug-Data` and `Real-Build-Times` tabs of `cost-model.xlsx`. The headline IBM 15x multiplier is corroborated bottom-up from our own measured 46-step process (see [`development-fix-workflow-cost.md`](development-fix-workflow-cost.md)).
+
 ---
 
 ## What "shift-left" means in plain terms

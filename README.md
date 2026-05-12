@@ -6,6 +6,8 @@ The argument is built around **shift-left economics**: a defect caught at the de
 
 This package assumes the four-stage pipeline topology **Local → Development → Staging → Production**, where CI runs but does not gate deployment. Adjust the Inputs tab and `data-gathering-checklist.md` queries if your topology differs.
 
+> **Calibrated with real team data.** The cost model is wired to 26 anonymised rework work-items (Jan–May 2026, 7 developers, mean 3.04 PRs per rework item) and 24 measured pipeline build durations. See the new `Real-Bug-Data`, `Real-Build-Times`, and `Process-Steps` tabs in `cost-model.xlsx`. Toggle `use_real_data` on the Inputs tab to switch between real and placeholder values.
+
 ## What's in this folder
 
 ### Read these in order (~30 min total)
@@ -24,7 +26,7 @@ This package assumes the four-stage pipeline topology **Local → Development �
 | File | Purpose |
 |------|---------|
 | [`cost-model.py`](cost-model.py) | Python script (uses `openpyxl`) that generates the Excel model. Edit the defaults at the top to match your team. |
-| [`cost-model.xlsx`](cost-model.xlsx) | Generated Excel model with live formulas. Tabs: Inputs, Defect-Distribution-PCE, Bug-Cost-by-Stage, Development-Fix-Workflow, Pipeline-Cost, Cycle-Time-Sprint, Workarounds, ROI-Summary, Sensitivity. |
+| [`cost-model.xlsx`](cost-model.xlsx) | Generated Excel model with live formulas. Tabs: Inputs, **Real-Bug-Data**, **Real-Build-Times**, **Process-Steps**, Defect-Distribution-PCE, Bug-Cost-by-Stage, Development-Fix-Workflow, Pipeline-Cost, Cycle-Time-Sprint, Workarounds, ROI-Summary, Sensitivity. |
 | [`cost-model.csv`](cost-model.csv) | Flat CSV fallback of the inputs and computed outputs. |
 
 ### The presentation

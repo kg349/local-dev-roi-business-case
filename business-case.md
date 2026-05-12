@@ -6,11 +6,13 @@
 
 **Expected outcome**: Recover 25-35% of effective sprint capacity, reduce defects escaping to integration by ~67%, payback in under 6 months.
 
+> **Calibrated with real team data (Jan–May 2026):** in a 4.25-month window we observed **26 work items that needed multiple PRs** (mean 3.04 PRs per rework item, max 7), distributed across 7 developers. Annualised: **~73 rework items/year** generating **~119 additional rework PR cycles** that would not exist if developers could verify fixes locally. The 24 measured build durations (critical path ~37 min per PR deployment) confirm the cycle-time tax. See the `Real-Bug-Data`, `Real-Build-Times`, and `Process-Steps` tabs of `cost-model.xlsx`.
+
 ---
 
 ## Executive summary
 
-Our developers cannot fully run their code locally. Every code change must be pushed to a shared Development environment to be verified, and every bug found there triggers a heavyweight PR-driven workflow that costs **10-15x more than the same bug caught at the developer's desk** (consistent with IBM Systems Sciences Institute's well-known cost-of-defect curve, and corroborated by our team-specific bottom-up calculation).
+Our developers cannot fully run their code locally. Every code change must be pushed to a shared Development environment to be verified, and every bug found there triggers a heavyweight PR-driven workflow that costs **10-15x more than the same bug caught at the developer's desk** (consistent with IBM Systems Sciences Institute's well-known cost-of-defect curve, and corroborated by our team-specific bottom-up calculation from the documented 46-step process).
 
 Our pipeline topology is **Local → Development → Staging → Production**. CI exists but does not gate deployment, which means CI-flagged bugs flow through to the Development environment and are caught there at the higher Development-stage cost. (This is a separate, smaller improvement opportunity discussed at the end.)
 

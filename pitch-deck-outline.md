@@ -8,6 +8,8 @@ This is the slide-by-slide outline for the management presentation. Build it in 
 - **Speaker notes**: what to say
 - **Source cell(s)**: which `cost-model.xlsx` cell(s) the numbers come from
 
+> **Numbers in this deck are calibrated with real team data**: 26 rework work-items observed over 4.25 months (Jan 1 – May 8, 2026), mean 3.04 PRs per rework item, 24 measured pipeline build durations (critical path 37 min per PR). See `cost-model.xlsx → Real-Bug-Data`, `Real-Build-Times`, and `Process-Steps` tabs. The IBM 15x cost multiplier remains the industry anchor; our bottom-up calculation from the documented 46-step process corroborates it.
+
 ---
 
 ## Slide 1: Title
