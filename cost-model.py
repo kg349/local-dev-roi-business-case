@@ -281,9 +281,23 @@ class Inputs:
     redo_factor_pre_qa: float = 35.0 / 46.0   # ~76% of process repeated per dev-caught rework
     redo_factor_post_qa: float = 40.0 / 46.0  # ~87% of process repeated per QA-caught rework
 
+    # NuGet vs ProjectReference inner-loop tax
+    # Source: real team data shows "Build local NuGet packages" = 6 min per refresh.
+    nuget_rebuild_min: float = 6.0  # wall-clock minutes for a local NuGet rebuild (measured)
+    nuget_rebuilds_per_dev_per_day: float = 3.0  # avg full rebuilds per dev per day
+    nuget_idle_factor: float = 0.6  # share of rebuild time NOT recovered by context switch
+    nuget_pkgs_per_dev_per_cross_pkg_feature: float = 12.0  # extra rebuilds during cross-pkg work
+    cross_pkg_features_per_dev_per_year: float = 18.0  # features touching shared libs
+    nuget_rebuilds_per_rework_cycle: float = 1.0  # step 21 of the 46-step process
+    pct_nuget_eliminable_with_project_refs: float = 0.70  # 70% of pkg-related friction removed
+    project_ref_migration_one_time_hours: float = 80.0  # one-time refactor budget
+    project_ref_migration_team_size: int = 2  # devs working on the migration
+    nuget_external_consumer_pkgs_per_year: float = 12.0  # release packs we still need
+
     # Strategy toggles
     use_bottom_up_multiplier: bool = True
     use_real_data: bool = True
+    apply_project_ref_savings: bool = True  # include #7 in total ROI?
     discount_rate: float = 0.10  # for 3-year NPV
 
 
@@ -362,6 +376,7 @@ def build_workbook(inp: Inputs) -> Workbook:
     build_real_bug_data(wb, inp)
     build_real_build_times(wb, inp)
     build_process_steps(wb)
+    build_nuget_vs_project_ref(wb, inp)
     build_defect_distribution(wb)
     build_bug_cost_by_stage(wb)
     build_development_fix_workflow(wb)
@@ -483,9 +498,22 @@ def build_inputs(wb: Workbook, inp: Inputs):
         ("Redo factor — dev-caught (steps 1-35 of 46)", "redo_factor_pre_qa", inp.redo_factor_pre_qa, "frac", "Pre-QA bugs repeat ~76% of the process"),
         ("Redo factor — QA-caught (steps 1-40 of 46)", "redo_factor_post_qa", inp.redo_factor_post_qa, "frac", "Post-QA bugs repeat ~87% of the process"),
 
+        ("--- NuGet vs ProjectReference Inner Loop ---", None, "", "", ""),
+        ("NuGet local rebuild duration (min)", "nuget_rebuild_min", inp.nuget_rebuild_min, "min", "Real team data — 'Build local NuGet packages' = 6 min"),
+        ("NuGet rebuilds per dev per day", "nuget_rebuilds_per_dev_per_day", inp.nuget_rebuilds_per_dev_per_day, "rebuilds", "Triggered by pulls, branch switches, and library edits"),
+        ("NuGet rebuild idle factor", "nuget_idle_factor", inp.nuget_idle_factor, "frac", "Share of wait time NOT recovered by context switch (0=fully recovered, 1=fully lost)"),
+        ("NuGet rebuilds per cross-pkg feature", "nuget_pkgs_per_dev_per_cross_pkg_feature", inp.nuget_pkgs_per_dev_per_cross_pkg_feature, "rebuilds", "Extra iterations when actively iterating on a shared lib"),
+        ("Cross-pkg features per dev per year", "cross_pkg_features_per_dev_per_year", inp.cross_pkg_features_per_dev_per_year, "features", "Features that touch a shared/referenced library"),
+        ("NuGet rebuilds per rework cycle", "nuget_rebuilds_per_rework_cycle", inp.nuget_rebuilds_per_rework_cycle, "rebuilds", "Step 21 of the 46-step process"),
+        ("% NuGet friction eliminable with ProjectRef", "pct_nuget_eliminable_with_project_refs", inp.pct_nuget_eliminable_with_project_refs, "frac", "Some scenarios still require packaging (release, external consumers)"),
+        ("Project-ref migration one-time hours", "project_ref_migration_one_time_hours", inp.project_ref_migration_one_time_hours, "hrs", "Refactor budget per dev"),
+        ("Project-ref migration team size", "project_ref_migration_team_size", inp.project_ref_migration_team_size, "devs", "Devs doing the refactor"),
+        ("NuGet packs we still publish per year", "nuget_external_consumer_pkgs_per_year", inp.nuget_external_consumer_pkgs_per_year, "packs", "For external/release consumers — not eliminated by ProjectRef"),
+
         ("--- Strategy Toggles ---", None, "", "", ""),
         ("Use bottom-up multiplier (1=yes, 0=no)", "use_bottom_up_multiplier", 1 if inp.use_bottom_up_multiplier else 0, "0/1", "1 = compute integration multiplier from workflow tab"),
         ("Use real team data (1=yes, 0=no)", "use_real_data", 1 if inp.use_real_data else 0, "0/1", "1 = source pipeline duration, rework rate, PR cost from real tabs"),
+        ("Apply project-ref savings to ROI (1=yes, 0=no)", "apply_project_ref_savings", 1 if inp.apply_project_ref_savings else 0, "0/1", "0 = isolate this initiative from the headline ROI"),
         ("Discount rate for NPV", "discount_rate", inp.discount_rate, "frac", "10% default"),
     ]
 
@@ -776,6 +804,260 @@ def build_process_steps(wb: Workbook):
         phase, repeats = label_map[status]
         ws.cell(row=row, column=3, value=phase).border = BORDER
         ws.cell(row=row, column=4, value=repeats).border = BORDER
+        row += 1
+
+
+# ---------------------------------------------------------------------------
+# Nuget-vs-ProjectRef sheet — internal-NuGet inner-loop tax + migration ROI
+# ---------------------------------------------------------------------------
+
+def build_nuget_vs_project_ref(wb: Workbook, inp: Inputs):
+    ws = wb.create_sheet("Nuget-vs-ProjectRef")
+    widen(ws, {"A": 56, "B": 18, "C": 60})
+
+    ws["A1"] = "Internal NuGet Inner-Loop Tax — Case for Project References"
+    ws["A1"].font = Font(bold=True, size=14)
+    ws.merge_cells("A1:C1")
+
+    ws["A2"] = (
+        "Quantifies the daily/weekly cost of rebuilding internal NuGet packages on every "
+        "branch switch, pull, and shared-library iteration. Compares to a ProjectReference "
+        "model where the same code is consumed directly from the solution. "
+        "Measured input: 6 min per local NuGet rebuild (team data)."
+    )
+    ws["A2"].font = NOTE_FONT
+    ws.merge_cells("A2:C2")
+
+    header_row(ws, 4, ["Item", "Value", "Notes"])
+
+    row = 5
+    # --------------- 1. Daily-pull tax ---------------
+    section_row(ws, row, "1. Daily 'pull + rebuild' tax", cols=3)
+    row += 1
+    ws.cell(row=row, column=1, value="Annual NuGet rebuilds (team-wide, daily-pull pattern)").border = BORDER
+    ws.cell(
+        row=row,
+        column=2,
+        value="=team_size*nuget_rebuilds_per_dev_per_day*working_days_per_year",
+    ).number_format = "#,##0"
+    daily_rebuilds_cell = f"B{row}"
+    ws.cell(row=row, column=3, value="Pulls from development branch, branch switches, NuGet feed refreshes").font = NOTE_FONT
+    row += 1
+    ws.cell(row=row, column=1, value="Annual minutes lost (wall clock)").border = BORDER
+    ws.cell(row=row, column=2, value=f"={daily_rebuilds_cell}*nuget_rebuild_min").number_format = "#,##0"
+    daily_min_cell = f"B{row}"
+    row += 1
+    ws.cell(row=row, column=1, value="Annual hours lost (after idle factor)").border = BORDER
+    ws.cell(row=row, column=2, value=f"={daily_min_cell}/60*nuget_idle_factor").number_format = "#,##0"
+    daily_hrs_cell = f"B{row}"
+    row += 1
+    ws.cell(row=row, column=1, value="Annual $ cost — daily-pull tax").border = BORDER
+    ws.cell(
+        row=row,
+        column=2,
+        value=f"={daily_hrs_cell}*hourly_rate*context_switch_multiplier",
+    ).number_format = "$#,##0"
+    daily_cost_cell = f"B{row}"
+    row += 2
+
+    # --------------- 2. Cross-package iteration tax ---------------
+    section_row(ws, row, "2. Cross-package iteration tax (active library work)", cols=3)
+    row += 1
+    ws.cell(row=row, column=1, value="Annual cross-pkg feature instances (team-wide)").border = BORDER
+    ws.cell(
+        row=row,
+        column=2,
+        value="=team_size*cross_pkg_features_per_dev_per_year",
+    ).number_format = "#,##0"
+    cross_pkg_features_cell = f"B{row}"
+    ws.cell(row=row, column=3, value="Features that require editing a referenced shared library").font = NOTE_FONT
+    row += 1
+    ws.cell(row=row, column=1, value="Annual extra rebuilds (iterations on libraries)").border = BORDER
+    ws.cell(
+        row=row,
+        column=2,
+        value=f"={cross_pkg_features_cell}*nuget_pkgs_per_dev_per_cross_pkg_feature",
+    ).number_format = "#,##0"
+    cross_pkg_rebuilds_cell = f"B{row}"
+    row += 1
+    ws.cell(row=row, column=1, value="Annual minutes (wall clock)").border = BORDER
+    ws.cell(row=row, column=2, value=f"={cross_pkg_rebuilds_cell}*nuget_rebuild_min").number_format = "#,##0"
+    cross_pkg_min_cell = f"B{row}"
+    row += 1
+    ws.cell(row=row, column=1, value="Annual hours (after idle factor)").border = BORDER
+    ws.cell(row=row, column=2, value=f"={cross_pkg_min_cell}/60*nuget_idle_factor").number_format = "#,##0"
+    cross_pkg_hrs_cell = f"B{row}"
+    row += 1
+    ws.cell(row=row, column=1, value="Annual $ cost — cross-package tax").border = BORDER
+    ws.cell(
+        row=row,
+        column=2,
+        value=f"={cross_pkg_hrs_cell}*hourly_rate*context_switch_multiplier",
+    ).number_format = "$#,##0"
+    cross_pkg_cost_cell = f"B{row}"
+    row += 2
+
+    # --------------- 3. Rework-cycle NuGet tax ---------------
+    section_row(ws, row, "3. Rework-cycle NuGet tax (step 21 of 46-step process)", cols=3)
+    row += 1
+    ws.cell(row=row, column=1, value="Annual rework-cycle NuGet rebuilds").border = BORDER
+    # Use real-data rework items annually × avg PRs per rework item × rebuilds per cycle
+    ws.cell(
+        row=row,
+        column=2,
+        value="=real_rework_items_annual*(real_avg_prs_per_rework-1)*nuget_rebuilds_per_rework_cycle",
+    ).number_format = "#,##0"
+    rework_nuget_rebuilds_cell = f"B{row}"
+    ws.cell(row=row, column=3, value="One NuGet rebuild per rework cycle (step 21 of the documented process)").font = NOTE_FONT
+    row += 1
+    ws.cell(row=row, column=1, value="Annual $ cost — rework-cycle NuGet tax").border = BORDER
+    ws.cell(
+        row=row,
+        column=2,
+        value=(
+            f"={rework_nuget_rebuilds_cell}*nuget_rebuild_min/60"
+            "*hourly_rate*nuget_idle_factor*context_switch_multiplier"
+        ),
+    ).number_format = "$#,##0"
+    rework_nuget_cost_cell = f"B{row}"
+    row += 2
+
+    # --------------- 4. Total + savings ---------------
+    section_row(ws, row, "Totals", cols=3)
+    row += 1
+    total_row(ws, row, cols=3)
+    ws.cell(row=row, column=1, value="TOTAL ANNUAL NUGET TAX (status quo)")
+    ws.cell(
+        row=row,
+        column=2,
+        value=f"={daily_cost_cell}+{cross_pkg_cost_cell}+{rework_nuget_cost_cell}",
+    ).number_format = "$#,##0"
+    total_tax_cell = f"B{row}"
+    wb.defined_names["annual_nuget_tax"] = DefinedName(
+        name="annual_nuget_tax", attr_text=f"'Nuget-vs-ProjectRef'!$B${row}"
+    )
+    row += 1
+    ws.cell(row=row, column=1, value="Eliminable share with ProjectReferences").border = BORDER
+    ws.cell(
+        row=row,
+        column=2,
+        value=f"={total_tax_cell}*pct_nuget_eliminable_with_project_refs",
+    ).number_format = "$#,##0"
+    eliminable_cell = f"B{row}"
+    row += 1
+    ws.cell(row=row, column=1, value="Residual tax (ProjectReference world)").border = BORDER
+    ws.cell(
+        row=row,
+        column=2,
+        value=f"={total_tax_cell}-{eliminable_cell}",
+    ).number_format = "$#,##0"
+    row += 2
+
+    # --------------- 5. Migration investment ---------------
+    section_row(ws, row, "Migration Investment (one-time)", cols=3)
+    row += 1
+    ws.cell(row=row, column=1, value="Refactor labor cost").border = BORDER
+    ws.cell(
+        row=row,
+        column=2,
+        value="=project_ref_migration_one_time_hours*project_ref_migration_team_size*hourly_rate",
+    ).number_format = "$#,##0"
+    migration_cost_cell = f"B{row}"
+    ws.cell(row=row, column=3, value="Convert PackageReferences -> ProjectReferences for in-solution libs; update SLN").font = NOTE_FONT
+    row += 1
+    ws.cell(row=row, column=1, value="Residual NuGet pack publish cost (release-only)").border = BORDER
+    ws.cell(
+        row=row,
+        column=2,
+        value="=nuget_external_consumer_pkgs_per_year*0.5*hourly_rate",
+    ).number_format = "$#,##0"
+    ws.cell(row=row, column=3, value="Assumes 30 min of dev time per external pack we still publish").font = NOTE_FONT
+    publish_cost_cell = f"B{row}"
+    row += 1
+    total_row(ws, row, cols=3)
+    ws.cell(row=row, column=1, value="ONE-TIME + ANNUAL RESIDUAL")
+    ws.cell(
+        row=row,
+        column=2,
+        value=f"={migration_cost_cell}+{publish_cost_cell}",
+    ).number_format = "$#,##0"
+    row += 2
+
+    # --------------- 6. ROI line for THIS initiative ---------------
+    section_row(ws, row, "ROI of ProjectReference Migration (standalone)", cols=3)
+    row += 1
+    total_row(ws, row, cols=3)
+    ws.cell(row=row, column=1, value="ANNUAL SAVINGS (eliminable - publish cost)")
+    ws.cell(
+        row=row,
+        column=2,
+        value=f"={eliminable_cell}-{publish_cost_cell}",
+    ).number_format = "$#,##0"
+    standalone_savings_cell = f"B{row}"
+    wb.defined_names["annual_project_ref_savings"] = DefinedName(
+        name="annual_project_ref_savings",
+        attr_text=f"'Nuget-vs-ProjectRef'!$B${row}",
+    )
+    row += 1
+    ws.cell(row=row, column=1, value="Payback period (months)").border = BORDER
+    ws.cell(
+        row=row,
+        column=2,
+        value=f"=IF({standalone_savings_cell}>0,{migration_cost_cell}/({standalone_savings_cell}/12),\"--\")",
+    ).number_format = "0.0"
+    row += 1
+    ws.cell(row=row, column=1, value="Year 1 net (savings - migration)").border = BORDER
+    ws.cell(
+        row=row,
+        column=2,
+        value=f"={standalone_savings_cell}-{migration_cost_cell}",
+    ).number_format = "$#,##0"
+    row += 1
+    ws.cell(row=row, column=1, value="3-year cumulative net").border = BORDER
+    ws.cell(
+        row=row,
+        column=2,
+        value=f"=3*{standalone_savings_cell}-{migration_cost_cell}",
+    ).number_format = "$#,##0"
+    row += 2
+
+    # --------------- 7. Cycle-time breakdown for the deck ---------------
+    section_row(ws, row, "Cycle-Time Breakdown (for the deck)", cols=3)
+    row += 1
+    ws.cell(row=row, column=1, value="Median library iteration today (edit -> pkg -> consume)").border = BORDER
+    ws.cell(
+        row=row,
+        column=2,
+        value="=nuget_rebuild_min+2",
+    ).number_format = "0.0"
+    ws.cell(row=row, column=3, value="6 min rebuild + ~2 min version bump / restore").font = NOTE_FONT
+    today_cycle_cell = f"B{row}"
+    row += 1
+    ws.cell(row=row, column=1, value="Median library iteration with ProjectReference").border = BORDER
+    ws.cell(row=row, column=2, value=0.5).number_format = "0.0"
+    ws.cell(row=row, column=3, value="Incremental compile of the referenced project, typically <30 sec").font = NOTE_FONT
+    target_cycle_cell = f"B{row}"
+    row += 1
+    ws.cell(row=row, column=1, value="Cycle-time delta (min per iteration)").border = BORDER
+    ws.cell(row=row, column=2, value=f"={today_cycle_cell}-{target_cycle_cell}").number_format = "0.0"
+    row += 1
+    ws.cell(row=row, column=1, value="Cycle-time delta (% reduction)").border = BORDER
+    ws.cell(row=row, column=2, value=f"=1-{target_cycle_cell}/{today_cycle_cell}").number_format = "0.0%"
+    row += 2
+
+    section_row(ws, row, "When to keep PackageReference (counter-considerations)", cols=3)
+    row += 1
+    keepers = [
+        ("Library has external (non-team) consumers", "Still publish; ProjectRef in dev, PackageRef in CI release"),
+        ("Library is independently versioned for SLAs", "Keep PackageReference for the discipline"),
+        ("Library is in a separate solution / repo", "Hybrid: dotnet pack to local feed via build-pipeline"),
+        ("Solution build time would become unmanageable", "Use SLN filters / solution slicing first"),
+    ]
+    for lbl, note in keepers:
+        ws.cell(row=row, column=1, value=lbl).border = BORDER
+        ws.cell(row=row, column=2, value="—").border = BORDER
+        ws.cell(row=row, column=3, value=note).font = NOTE_FONT
+        ws.cell(row=row, column=3).border = BORDER
         row += 1
 
 
@@ -1358,9 +1640,19 @@ def build_roi_summary(wb: Workbook):
     ws.cell(row=row, column=3, value="Extra PR cycles measured in Jan-May 2026 data").font = NOTE_FONT
     row += 1
 
+    ws.cell(row=row, column=1, value="7. ProjectReference migration (separately approvable)")
+    ws.cell(
+        row=row,
+        column=2,
+        value="=IF(apply_project_ref_savings=1,annual_project_ref_savings,0)",
+    ).number_format = "$#,##0"
+    p7 = f"B{row}"
+    ws.cell(row=row, column=3, value="From Nuget-vs-ProjectRef tab; toggle on Inputs to exclude").font = NOTE_FONT
+    row += 1
+
     total_row(ws, row, cols=3)
     ws.cell(row=row, column=1, value="TOTAL ANNUAL SAVINGS")
-    ws.cell(row=row, column=2, value=f"={p1}+{p2}+{p3}+{p4}+{p5}+{p6}").number_format = "$#,##0"
+    ws.cell(row=row, column=2, value=f"={p1}+{p2}+{p3}+{p4}+{p5}+{p6}+{p7}").number_format = "$#,##0"
     total_savings_cell = f"B{row}"
     row += 2
 
@@ -1570,8 +1862,42 @@ def write_csv(inp: Inputs, path: str):
     annual_rework_workflow_cost = annual_rework_items * extra_prs_per_item * cost_per_extra_cycle
     rework_savings = annual_rework_workflow_cost * inp.pct_preventable_with_local
 
+    # NuGet -> ProjectReference migration savings (separately approvable).
+    annual_nuget_daily_rebuilds = (
+        inp.team_size * inp.nuget_rebuilds_per_dev_per_day * inp.working_days_per_year
+    )
+    annual_nuget_daily_cost = (
+        annual_nuget_daily_rebuilds * inp.nuget_rebuild_min / 60
+        * inp.nuget_idle_factor * inp.hourly_rate * inp.context_switch_multiplier
+    )
+    annual_cross_pkg_rebuilds = (
+        inp.team_size * inp.cross_pkg_features_per_dev_per_year
+        * inp.nuget_pkgs_per_dev_per_cross_pkg_feature
+    )
+    annual_cross_pkg_cost = (
+        annual_cross_pkg_rebuilds * inp.nuget_rebuild_min / 60
+        * inp.nuget_idle_factor * inp.hourly_rate * inp.context_switch_multiplier
+    )
+    rework_nuget_rebuilds = annual_rework_items * extra_prs_per_item * inp.nuget_rebuilds_per_rework_cycle
+    rework_nuget_cost = (
+        rework_nuget_rebuilds * inp.nuget_rebuild_min / 60
+        * inp.nuget_idle_factor * inp.hourly_rate * inp.context_switch_multiplier
+    )
+    annual_nuget_tax = annual_nuget_daily_cost + annual_cross_pkg_cost + rework_nuget_cost
+    nuget_eliminable = annual_nuget_tax * inp.pct_nuget_eliminable_with_project_refs
+    publish_cost = inp.nuget_external_consumer_pkgs_per_year * 0.5 * inp.hourly_rate
+    project_ref_savings = nuget_eliminable - publish_cost
+    project_ref_migration_cost = (
+        inp.project_ref_migration_one_time_hours * inp.project_ref_migration_team_size * inp.hourly_rate
+    )
+    if not inp.apply_project_ref_savings:
+        project_ref_savings_for_total = 0.0
+    else:
+        project_ref_savings_for_total = project_ref_savings
+
     total_annual_savings = (
-        shift_left_savings + sprint_savings + pipeline_savings + workaround_savings + rework_savings
+        shift_left_savings + sprint_savings + pipeline_savings + workaround_savings
+        + rework_savings + project_ref_savings_for_total
     )
 
     one_time = (
@@ -1613,7 +1939,12 @@ def write_csv(inp: Inputs, path: str):
         w.writerow(["Savings", "3. Pipeline retries", f"${pipeline_savings:,.0f}"])
         w.writerow(["Savings", "4. Workarounds", f"${workaround_savings:,.0f}"])
         w.writerow(["Savings", "5. Rework cycles (real data)", f"${rework_savings:,.0f}"])
+        w.writerow(["Savings", "6. ProjectRef migration (standalone, applied=%s)" % ("Y" if inp.apply_project_ref_savings else "N"), f"${project_ref_savings:,.0f}"])
         w.writerow(["Savings", "TOTAL ANNUAL SAVINGS", f"${total_annual_savings:,.0f}"])
+        w.writerow(["NuGet", "Annual NuGet tax (status quo)", f"${annual_nuget_tax:,.0f}"])
+        w.writerow(["NuGet", "Eliminable with ProjectRef", f"${nuget_eliminable:,.0f}"])
+        w.writerow(["NuGet", "Migration one-time cost", f"${project_ref_migration_cost:,.0f}"])
+        w.writerow(["NuGet", "Migration payback (months)", f"{project_ref_migration_cost / (project_ref_savings/12):.1f}" if project_ref_savings > 0 else "n/a"])
         w.writerow(["Investment", "One-time investment", f"${one_time:,.0f}"])
         w.writerow(["Investment", "Annual ongoing cost", f"${annual_cost:,.0f}"])
         w.writerow(["ROI", "Net annual savings", f"${net_annual:,.0f}"])
@@ -1625,6 +1956,9 @@ def write_csv(inp: Inputs, path: str):
         "pipeline_savings": pipeline_savings,
         "workaround_savings": workaround_savings,
         "rework_savings": rework_savings,
+        "project_ref_savings": project_ref_savings,
+        "annual_nuget_tax": annual_nuget_tax,
+        "project_ref_migration_cost": project_ref_migration_cost,
         "total_annual_savings": total_annual_savings,
         "one_time": one_time,
         "annual_cost": annual_cost,

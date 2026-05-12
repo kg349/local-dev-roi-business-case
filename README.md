@@ -20,13 +20,14 @@ This package assumes the four-stage pipeline topology **Local â†’ Development â†
 | 4 | [`cycle-time-and-sprint-impact.md`](cycle-time-and-sprint-impact.md) | How the broken inner loop directly eats sprint capacity, story carry-over, and predictability. | Product + delivery managers |
 | 5 | [`azure-devops-pipeline-cost.md`](azure-devops-pipeline-cost.md) | ADO pricing deep-dive: parallel jobs, per-minute cost, regression test minutes, queue wait as engineer idle. | Platform / DevOps |
 | 6 | [`developer-workarounds.md`](developer-workarounds.md) | Catalogue of 14 workarounds devs do today + self-assessment checklist. | The whole team (fill this in as a group) |
+| 7 | [`nuget-vs-project-references.md`](nuget-vs-project-references.md) | **Standalone companion**: the cycle-time tax of building internal NuGet packages locally, and the case for `<ProjectReference>`. Independently approvable from the main investment. | Architects, library owners, PM |
 
 ### The numbers
 
 | File | Purpose |
 |------|---------|
 | [`cost-model.py`](cost-model.py) | Python script (uses `openpyxl`) that generates the Excel model. Edit the defaults at the top to match your team. |
-| [`cost-model.xlsx`](cost-model.xlsx) | Generated Excel model with live formulas. Tabs: Inputs, **Real-Bug-Data**, **Real-Build-Times**, **Process-Steps**, Defect-Distribution-PCE, Bug-Cost-by-Stage, Development-Fix-Workflow, Pipeline-Cost, Cycle-Time-Sprint, Workarounds, ROI-Summary, Sensitivity. |
+| [`cost-model.xlsx`](cost-model.xlsx) | Generated Excel model with live formulas. Tabs: Inputs, **Real-Bug-Data**, **Real-Build-Times**, **Process-Steps**, **Nuget-vs-ProjectRef**, Defect-Distribution-PCE, Bug-Cost-by-Stage, Development-Fix-Workflow, Pipeline-Cost, Cycle-Time-Sprint, Workarounds, ROI-Summary, Sensitivity. |
 | [`cost-model.csv`](cost-model.csv) | Flat CSV fallback of the inputs and computed outputs. |
 
 ### The presentation

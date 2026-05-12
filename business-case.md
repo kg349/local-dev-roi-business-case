@@ -22,6 +22,8 @@ Three compounding consequences:
 2. **Sprint capacity is eroded by ~33%** because of cycle-time waits — we are paying for 8 developers and getting the output of ~5.3. Estimated annual cost: **~$340-500k**.
 3. **Developers have invented workarounds** (shared databases, hardcoded credentials, disabled auth, push-to-test debugging) that compound security risk, cycle time, and onboarding cost.
 
+A **fourth, independently approvable** finding is documented separately in [`nuget-vs-project-references.md`](nuget-vs-project-references.md): the team consumes its own libraries as internal NuGet packages, which adds a measured **6 min** to every local NuGet rebuild and costs ~$48K/year before mitigation. Switching in-solution consumers to `<ProjectReference>` recovers ~$33K/year with ~5-month payback. The `apply_project_ref_savings` toggle on the `Inputs` tab lets reviewers include or exclude this from the headline ROI.
+
 The investment to fix this is small (~$20-30k/year ongoing in licenses, ~$15-25k one-time for setup and training). The savings are large enough that the **payback period is under six months** under conservative assumptions.
 
 This document and the accompanying spreadsheet (`cost-model.xlsx`) make the math fully transparent and parameterised.
