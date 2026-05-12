@@ -36,6 +36,7 @@ This package assumes the four-stage pipeline topology **Local â†’ Development â†
 |------|---------|
 | [`pitch-deck-outline.md`](pitch-deck-outline.md) | 17-slide outline with bullet content and speaker notes. Each numeric claim references the spreadsheet cell it comes from. |
 | [`data-gathering-checklist.md`](data-gathering-checklist.md) | Exact Azure DevOps / Jira queries (WIQL + KQL), HR/Finance questions, and a 1-week dev time-tracking template to replace the placeholders with your real numbers. |
+| [`team-questionnaire.md`](team-questionnaire.md) | Structured questionnaire to interview the team (local-env topology, builds-per-PR, NuGet inner loop, bug workflow). Each answer is tagged with the spreadsheet input it informs. Includes a 8-question "quick path" calibrating 70% of the model. |
 
 ## How to use this
 

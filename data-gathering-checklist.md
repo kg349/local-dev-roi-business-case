@@ -6,6 +6,8 @@ This checklist replaces the placeholder numbers in `cost-model.xlsx` with real n
 
 The order below is roughly highest-leverage to lowest. If you can only do the first three, the model is already credible.
 
+> **Companion**: [`team-questionnaire.md`](team-questionnaire.md) covers the inputs you can only get by *asking people* (local environment topology, builds-per-PR perception, NuGet inner loop, workaround self-assessment). Use it in tandem with this file — queries here, interviews there.
+
 ---
 
 ## 1. Defect distribution from Azure Boards (HIGHEST PRIORITY)
